@@ -31,6 +31,8 @@ rd lib\RenderCore_OptixPrime_PBRT\x64 /S /Q
 del lib\RenderCore_OptixPrime_BDPT\optix\*.ptx /S /Q
 rd lib\RenderCore_Optix7\lib /S /Q
 rd lib\RenderCore_Optix7\x64 /S /Q
+rd lib\RenderCore_Optix7NRC\lib /S /Q
+rd lib\RenderCore_Optix7NRC\x64 /S /Q
 rd lib\RenderCore_Optix7Guiding\lib /S /Q
 rd lib\RenderCore_Optix7Guiding\x64 /S /Q
 del lib\RenderCore_Optix7\optix\*.ptx /S /Q
