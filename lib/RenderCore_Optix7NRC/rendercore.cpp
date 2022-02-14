@@ -114,20 +114,20 @@ void RenderCore::CreateOptixContext( int cc )
 
 	// load and compile PTX
 	string ptx;
-	if (NeedsRecompile( "../../lib/RenderCore_Optix7/optix/", ".optix.turing.cu.ptx", ".optix.cu", "../../RenderSystem/common_settings.h", "../core_settings.h" ))
+	if (NeedsRecompile( "../../lib/RenderCore_Optix7NRC/optix/", ".optix.turing.cu.ptx", ".optix.cu", "../../RenderSystem/common_settings.h", "../core_settings.h" ))
 	{
-		CUDATools::compileToPTX( ptx, TextFileRead( "../../lib/RenderCore_Optix7/optix/.optix.cu" ).c_str(), "../../lib/RenderCore_Optix7/optix", cc, 7 );
-		if (cc / 10 == 7) TextFileWrite( ptx, "../../lib/RenderCore_Optix7/optix/.optix.turing.cu.ptx" );
-		else if (cc / 10 == 6) TextFileWrite( ptx, "../../lib/RenderCore_Optix7/optix/.optix.pascal.cu.ptx" );
-		else if (cc / 10 == 5) TextFileWrite( ptx, "../../lib/RenderCore_Optix7/optix/.optix.maxwell.cu.ptx" );
+		CUDATools::compileToPTX( ptx, TextFileRead( "../../lib/RenderCore_Optix7NRC/optix/.optix.cu" ).c_str(), "../../lib/RenderCore_Optix7NRC/optix", cc, 7 );
+		if (cc / 10 == 7) TextFileWrite( ptx, "../../lib/RenderCore_Optix7NRC/optix/.optix.turing.cu.ptx" );
+		else if (cc / 10 == 6) TextFileWrite( ptx, "../../lib/RenderCore_Optix7NRC/optix/.optix.pascal.cu.ptx" );
+		else if (cc / 10 == 5) TextFileWrite( ptx, "../../lib/RenderCore_Optix7NRC/optix/.optix.maxwell.cu.ptx" );
 		printf( "recompiled .optix.cu.\n" );
 	}
 	else
 	{
 		const char* file = NULL;
-		if (cc / 10 == 7) file = "../../lib/RenderCore_Optix7/optix/.optix.turing.cu.ptx";
-		else if (cc / 10 == 6) file = "../../lib/RenderCore_Optix7/optix/.optix.pascal.cu.ptx";
-		else if (cc / 10 == 5) file = "../../lib/RenderCore_Optix7/optix/.optix.maxwell.cu.ptx";
+		if (cc / 10 == 7) file = "../../lib/RenderCore_Optix7NRC/optix/.optix.turing.cu.ptx";
+		else if (cc / 10 == 6) file = "../../lib/RenderCore_Optix7NRC/optix/.optix.pascal.cu.ptx";
+		else if (cc / 10 == 5) file = "../../lib/RenderCore_Optix7NRC/optix/.optix.maxwell.cu.ptx";
 		FILE* f;
 	#ifdef _MSC_VER
 		fopen_s( &f, file, "rb" );
@@ -219,9 +219,9 @@ void RenderCore::CreateOptixContext( int cc )
 void RenderCore::Init()
 {
 #ifdef _DEBUG
-	printf( "Initializing Optix7 core - DEBUG build.\n" );
+	printf( "Initializing Optix7 (NRC) - DEBUG build.\n" );
 #else
-	printf( "Initializing Optix7 core - RELEASE build.\n" );
+	printf( "Initializing Optix7 (NRC) - RELEASE build.\n" );
 #endif
 	// select the fastest device
 	uint device = CUDATools::FastestDevice();
