@@ -112,6 +112,7 @@ private:
 	CoreBuffer<float4>* hitBuffer = 0;				// intersection results
 	CoreBuffer<float4>* pathStateBuffer = 0;		// path state buffer
 	CoreBuffer<float4>* connectionBuffer = 0;		// shadow rays
+	CoreBuffer<float4>* trainBuffer = 0;            // training data encoded
 	CoreBuffer<OptixInstance>* instanceArray = 0;	// instance descriptors for Optix
 	CoreBuffer<Params>* optixParams;				// parameters to be used in optix code
 	CoreTexDesc* texDescs = 0;						// array of texture descriptors
@@ -137,6 +138,9 @@ private:
 	cudaEvent_t traceStart[MAXPATHLENGTH], traceEnd[MAXPATHLENGTH];
 	cudaEvent_t shadeStart[MAXPATHLENGTH], shadeEnd[MAXPATHLENGTH];
 	cudaEvent_t shadowStart, shadowEnd;
+	cudaEvent_t nrcTrainTraceStart[NRC_MAXTRAINPATHLENGTH], nrcTrainTraceEnd[NRC_MAXTRAINPATHLENGTH];
+	cudaEvent_t nrcTrainShadeStart[NRC_MAXTRAINPATHLENGTH], nrcTrainShadeEnd[NRC_MAXTRAINPATHLENGTH];
+	cudaEvent_t nrcTrainShadowStart, nrcTrainShadowEnd;
 protected:
 	// events
 	HANDLE startEvent, doneEvent;
@@ -152,7 +156,7 @@ public:
 	OptixProgramGroup progGroup[5];
 	OptixTraversableHandle bvhRoot;
 	Params params;
-	CUdeviceptr d_params[3];
+	CUdeviceptr d_params[5];
 };
 
 //  +-----------------------------------------------------------------------------+

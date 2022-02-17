@@ -22,7 +22,13 @@
 
 // core-specific settings
 #define CLAMPFIREFLIES		// suppress fireflies by clamping
-#define MAXPATHLENGTH		3
+#define MAXPATHLENGTH		5
+
+// NRC-specific settings
+#define NRC_MAXTRAINPATHLENGTH  5           // Should <= MAXPATHLENGTH
+#define NRC_NUMTRAINRAYS        65536
+#define NRC_TRAINCOMPONENTSIZE  6           // how many float4 one struct component occupies
+
 // #define CONSISTENTNORMALS	// consistent normal interpolation
 
 // low-level settings
@@ -107,6 +113,9 @@ struct Counters
 	int probedInstid;
 	int probedTriid;
 	float probedDist;
+	// NOTE: not needed, since we now do it separately
+	// uint nrcTrainExtensionRays;
+	// uint nrcTrainShadowRays;
 };
 
 // path tracer parameters
@@ -116,7 +125,9 @@ struct Params
 	{
 		SPAWN_PRIMARY = 0,	// optix code will spawn and trace primary rays
 		SPAWN_SHADOW,		// optix code will spawn and trace shadow rays
-		SPAWN_SECONDARY		// optix code will spawn and trace extension rays
+		SPAWN_SECONDARY,	// optix code will spawn and trace extension rays
+		SPAWN_SHADOW_NRC,	// NRC shadow ray program
+		SPAWN_PRIMARY_NRC   // NRC primary ray program
 	};
 	float4 posLensSize;
 	float3 right, up, p1;
@@ -128,6 +139,7 @@ struct Params
 	float4* connectData;
 	float4* hitData;
 	float4* pathStates;
+	float4* nrcTrainData;
 	uint* blueNoise;
 	OptixTraversableHandle bvhRoot;
 };

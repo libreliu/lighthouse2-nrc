@@ -28,6 +28,9 @@ void shade( const int pathCount, float4* accumulator, const uint stride,
 	float4* pathStates, float4* hits, float4* connections,
 	const uint R0, const uint shift, const uint* blueNoise, const int pass,
 	const int probePixelIdx, const int pathLength, const int w, const int h, const float spreadAngle );
+void shadeTrain(const int pathCount, float4* trainBuf, const uint stride,
+	float4* trainPathStates, float4* hits, float4* connections,
+	const uint R0, const uint shift, const uint* blueNoise, const int pass, const int pathLength, const int scrwidth, const int scrheight, const float spreadAngle);
 void finalizeRender( const float4* accumulator, const int w, const int h, const int spp );
 
 } // namespace lh2core
@@ -108,6 +111,9 @@ void RenderCore::CreateOptixContext( int cc )
 	cudaMalloc( (void**)(&d_params[0]), sizeof( Params ) );
 	cudaMalloc( (void**)(&d_params[1]), sizeof( Params ) );
 	cudaMalloc( (void**)(&d_params[2]), sizeof( Params ) );
+	cudaMalloc( (void**)(&d_params[3]), sizeof( Params ) );  // NRC Train Shadow
+	cudaMalloc( (void**)(&d_params[4]), sizeof( Params ) );  // NRC Train Primary
+	// NOTE (NRC): Set up five sets instead of three
 	// Note: we set up three sets of params, with the only difference being the 'phase' variable.
 	// During wavefront path tracing this allows us to select the phase without a copyToDevice,
 	// by passing the right param set for the Optix call. A bit ugly but it works.
@@ -268,6 +274,17 @@ void RenderCore::Init()
 	}
 	cudaEventCreate( &shadowStart );
 	cudaEventCreate( &shadowEnd );
+	// prepare nrc timing events
+	for (int i = 0; i < NRC_MAXTRAINPATHLENGTH; i++) {
+		cudaEventCreate( &nrcTrainShadeStart[i] );
+		cudaEventCreate( &nrcTrainShadeEnd[i] );
+		cudaEventCreate( &nrcTrainTraceStart[i] );
+		cudaEventCreate( &nrcTrainTraceEnd[i] );
+	}
+	cudaEventCreate( &shadowStart );
+	cudaEventCreate( &shadowEnd );
+	cudaEventCreate( &nrcTrainShadowStart );
+	cudaEventCreate( &nrcTrainShadowEnd );
 	// create events for worker thread communication
 	startEvent = CreateEvent( NULL, false, false, NULL );
 	doneEvent = CreateEvent( NULL, false, false, NULL );
@@ -309,15 +326,33 @@ void RenderCore::SetTarget( GLTexture* target, const uint spp )
 		delete accumulator;
 		delete hitBuffer;
 		delete pathStateBuffer;
-		connectionBuffer = new CoreBuffer<float4>( maxPixels * scrspp * 3 * 2, ON_DEVICE );
+		connectionBuffer = new CoreBuffer<float4>( std::max(maxPixels * scrspp, NRC_NUMTRAINRAYS * NRC_MAXTRAINPATHLENGTH) * 3 * 2, ON_DEVICE );
 		accumulator = new CoreBuffer<float4>( maxPixels, ON_DEVICE );
 		hitBuffer = new CoreBuffer<float4>( maxPixels * scrspp, ON_DEVICE );
+		// struct TrainPathStateComponent __attribute__((packed))
+		// {
+		// 	float3 O;				// ray origin
+		//  float roughness;        // surface roughness
+		// 	float2 D; 				// scattered dir (Spherical coord.)
+		//  float2 N;               // surface normal
+		//  float3 diffuseRefl;     // diffuse reflectance
+		//  float dummy1;
+		//  float3 specularRefl;    // specular reflectance
+		//  float dummy2;
+		// 	float3 L;				// luminance output
+		// 	float flags;            // (used during shade) previous roughness / specular
+		//  float3 throughput;      // (used during shade) throughput of this ray segment
+		//  float bsdfpdf;			// (used during shade) postponed previous-pass bsdfpdf
+		// };
+
+		trainBuffer = new CoreBuffer<float4>( NRC_NUMTRAINRAYS * NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE , ON_DEVICE );
 		cudaMemset( hitBuffer->DevPtr(), 255, maxPixels * scrspp * sizeof( float4 ) ); // set all hits to -1 for first frame.
-		pathStateBuffer = new CoreBuffer<float4>( maxPixels * scrspp * 3, ON_DEVICE );
+		pathStateBuffer = new CoreBuffer<float4>( std::max(maxPixels * scrspp, NRC_NUMTRAINRAYS * NRC_MAXTRAINPATHLENGTH) * 3, ON_DEVICE );
 		params.connectData = connectionBuffer->DevPtr();
 		params.accumulator = accumulator->DevPtr();
 		params.hitData = hitBuffer->DevPtr();
 		params.pathStates = pathStateBuffer->DevPtr();
+		params.nrcTrainData = trainBuffer->DevPtr();
 		printf( "buffers resized for %i pixels @ %i samples.\n", maxPixels, scrspp );
 	}
 	// clear the accumulator
@@ -870,8 +905,65 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 	cudaMemcpyAsync( (void*)d_params[1], &params, sizeof( Params ), cudaMemcpyHostToDevice, 0 );
 	params.phase = Params::SPAWN_SHADOW;
 	cudaMemcpyAsync( (void*)d_params[2], &params, sizeof( Params ), cudaMemcpyHostToDevice, 0 );
+	params.phase = Params::SPAWN_SHADOW_NRC;
+	cudaMemcpyAsync( (void*)d_params[3], &params, sizeof( Params ), cudaMemcpyHostToDevice, 0 );
+	params.phase = Params::SPAWN_PRIMARY_NRC;
+	cudaMemcpyAsync( (void*)d_params[4], &params, sizeof( Params ), cudaMemcpyHostToDevice, 0 );
 	// loop
 	Counters counters;
+	// A primary will be a sample ray if (pathIdx % nrcTrainingSampleModulus == 0) satisfied
+	// uint nrcTrainingSampleModulus = scrwidth * scrheight * scrspp / NRC_NUMTRAINRAYS;
+	// trace nrc rays first
+	uint trainPathCount = NRC_NUMTRAINRAYS;
+	for (int trainPathLength = 1; trainPathLength <= NRC_MAXTRAINPATHLENGTH; trainPathLength++) {
+		cudaEventRecord( nrcTrainTraceStart[trainPathLength - 1] );
+		if (trainPathLength == 1)
+		{
+			// spawn and extend camera rays
+			InitCountersForExtend(trainPathCount);
+			// NOTE: use 1spp here
+			CHK_OPTIX( optixLaunch( pipeline, 0, d_params[4], sizeof( Params ), &sbt, params.scrsize.x, params.scrsize.y, 1 ) );
+		}
+		else
+		{
+			// extend bounced paths
+			// if (pathLength == 2) coreStats.bounce1RayCount = pathCount; else coreStats.deepRayCount += pathCount;
+			InitCountersSubsequent();
+			CHK_OPTIX( optixLaunch( pipeline, 0, d_params[1], sizeof( Params ), &sbt, trainPathCount, 1, 1 ) );
+		}
+		cudaEventRecord( nrcTrainTraceEnd[trainPathLength - 1] );
+
+		cudaEventRecord( nrcTrainShadeStart[trainPathLength - 1] );
+		shadeTrain( trainPathCount, trainBuffer->DevPtr(), NRC_NUMTRAINRAYS,
+			pathStateBuffer->DevPtr(), hitBuffer->DevPtr(), noDirectLightsInScene ? 0 : connectionBuffer->DevPtr(),
+			RandomUInt( camRNGseed ) + trainPathLength * 91771, shiftSeed, blueNoise->DevPtr(), samplesTaken, trainPathLength, scrwidth, scrheight, view.spreadAngle );
+		cudaEventRecord( nrcTrainShadeEnd[trainPathLength - 1] );
+		counterBuffer->CopyToHost();
+		counters = counterBuffer->HostPtr()[0];
+		trainPathCount = counters.extensionRays;
+		printf("Train path count: %d (pathLength=%d)\n", trainPathCount, trainPathLength);
+		if (trainPathCount == 0) break;
+
+		// trace shadow rays now if the next loop iteration could overflow the buffer.
+		uint maxShadowRays = connectionBuffer->GetSize() / 3;
+		if ((trainPathCount + counters.shadowRays) >= maxShadowRays) if (counters.shadowRays > 0)
+		{
+			CHK_OPTIX( optixLaunch( pipeline, 0, d_params[3], sizeof( Params ), &sbt, counters.shadowRays, 1, 1 ) );
+			counterBuffer->HostPtr()[0].shadowRays = 0;
+			counterBuffer->CopyToDevice();
+			printf( "WARNING: connection buffer overflowed.\n" ); // we should not have to do this; handled here to be conservative.
+		}
+	}
+	// connect to light sources
+	cudaEventRecord( nrcTrainShadowStart );
+	if (counters.shadowRays > 0)
+	{
+		CHK_OPTIX( optixLaunch( pipeline, 0, d_params[3], sizeof( Params ), &sbt, counters.shadowRays, 1, 1 ) );
+	}
+	cudaEventRecord( nrcTrainShadowEnd );
+	printf("NRC training rays tracing phase done. \n");
+
+	// trace screen rays
 	uint pathCount = scrwidth * scrheight * scrspp;
 	coreStats.deepRayCount = 0;
 	coreStats.primaryRayCount = pathCount;

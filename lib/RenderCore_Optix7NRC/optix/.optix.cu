@@ -109,6 +109,33 @@ static __inline __device__ void generateEyeRay( float3& O, float3& D, const uint
 #define THREADMASK	0xffffffff // pascal, kepler, fermi
 #endif
 
+// Use 1 spp in the launch & here
+__device__ void setupPrimaryRayNRCTrain( const uint pixelIdx )
+{
+	const uint nrcTrainingSampleModulus = params.scrsize.x * params.scrsize.y / NRC_NUMTRAINRAYS;
+	const uint stride = NRC_NUMTRAINRAYS;
+	const uint sampleIdx = params.pass; // TODO: check this
+	if (pixelIdx % nrcTrainingSampleModulus != 0) {
+		return;
+	}
+	const uint pathIdx = pixelIdx / nrcTrainingSampleModulus;
+
+	uint seed = WangHash( pixelIdx * 16789 + params.pass * 1791 );
+	// generate eye ray
+	float3 O, D;
+	generateEyeRay( O, D, pixelIdx, sampleIdx, seed );
+	// populate path state array
+	// *IMPORTANT*: hold actual pixelIdx in O4.w, used as pathIdx in shading step
+	params.pathStates[pathIdx] = make_float4( O, __uint_as_float( (pixelIdx << 6) + 1 /* S_SPECULAR in CUDA code */ ) );
+	params.pathStates[pathIdx + stride] = make_float4( D, 0 );
+	// trace eye ray
+	uint u0, u1 = 0, u2 = 0xffffffff, u3 = __float_as_uint( 1e34f );
+	optixTrace( params.bvhRoot, O, D, params.geometryEpsilon, 1e34f, 0.0f /* ray time */, OptixVisibilityMask( 1 ),
+		OPTIX_RAY_FLAG_NONE, 0, 2, 0, u0, u1, u2, u3 );
+	if (pixelIdx < stride /* OptiX bug workaround? */) if (u2 != 0xffffffff) /* bandwidth reduction */
+		params.hitData[pathIdx] = make_float4( __uint_as_float( u0 ), __uint_as_float( u1 ), __uint_as_float( u2 ), __uint_as_float( u3 ) );
+}
+
 __device__ void setupPrimaryRay( const uint pathIdx, const uint stride )
 {
 	const uint pixelIdx = pathIdx % (params.scrsize.x * params.scrsize.y);
@@ -153,6 +180,23 @@ __device__ void generateShadowRay( const uint rayIdx, const uint stride )
 	if (pixelIdx < stride /* OptiX bug workaround? */) params.accumulator[pixelIdx] += make_float4( E4.x, E4.y, E4.z, 1 );
 }
 
+__device__ void generateShadowRayNRCTrain( const uint rayIdx, const uint stride )
+{
+	const float4 O4 = params.connectData[rayIdx]; // O4
+	const float4 D4 = params.connectData[rayIdx + stride * 2]; // D4
+	// launch shadow ray
+	uint u0 = 1;
+	optixTrace( params.bvhRoot, make_float3( O4 ), make_float3( D4 ), params.geometryEpsilon, D4.w, 0.0f /* ray time */, OptixVisibilityMask( 1 ),
+		OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT, 1, 2, 1, u0 );
+	if (u0) return;
+	const float4 E4 = params.connectData[rayIdx + stride * 2 * 2]; // E4
+	const int pathIdx = __float_as_int( E4.w );
+	const int pathLength = __float_as_int( O4.w );
+	params.nrcTrainData[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * pathIdx + pathLength * NRC_TRAINCOMPONENTSIZE + 4].x += E4.x;
+	params.nrcTrainData[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * pathIdx + pathLength * NRC_TRAINCOMPONENTSIZE + 4].y += E4.y;
+	params.nrcTrainData[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * pathIdx + pathLength * NRC_TRAINCOMPONENTSIZE + 4].z += E4.z;
+}
+
 extern "C" __global__ void __raygen__rg()
 {
 	const uint stride = params.scrsize.x * params.scrsize.y * params.scrsize.z;
@@ -163,6 +207,8 @@ extern "C" __global__ void __raygen__rg()
 	case Params::SPAWN_PRIMARY: /* primary rays */ setupPrimaryRay( rayIdx, stride ); break;
 	case Params::SPAWN_SECONDARY: /* secondary rays */ setupSecondaryRay( rayIdx, stride ); break;
 	case Params::SPAWN_SHADOW: /* shadow rays */ generateShadowRay( rayIdx, stride ); break;
+	case Params::SPAWN_SHADOW_NRC: /* shadow rays (NRC train) */ generateShadowRayNRCTrain( rayIdx, stride ); break;
+	case Params::SPAWN_PRIMARY_NRC: /* primary rays (NRC) */ setupPrimaryRayNRCTrain( rayIdx ); break;
 	}
 }
 
