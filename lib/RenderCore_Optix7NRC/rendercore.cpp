@@ -938,6 +938,8 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 			pathStateBuffer->DevPtr(), hitBuffer->DevPtr(), noDirectLightsInScene ? 0 : connectionBuffer->DevPtr(),
 			RandomUInt( camRNGseed ) + trainPathLength * 91771, shiftSeed, blueNoise->DevPtr(), samplesTaken, trainPathLength, scrwidth, scrheight, view.spreadAngle );
 		cudaEventRecord( nrcTrainShadeEnd[trainPathLength - 1] );
+
+		CHK_CUDA( cudaStreamSynchronize(0) );
 		counterBuffer->CopyToHost();
 		counters = counterBuffer->HostPtr()[0];
 		trainPathCount = counters.extensionRays;

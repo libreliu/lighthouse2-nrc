@@ -26,7 +26,7 @@
 
 // NRC-specific settings
 #define NRC_MAXTRAINPATHLENGTH  5           // Should <= MAXPATHLENGTH
-#define NRC_NUMTRAINRAYS        65536
+#define NRC_NUMTRAINRAYS        10
 #define NRC_TRAINCOMPONENTSIZE  6           // how many float4 one struct component occupies
 
 // #define CONSISTENTNORMALS	// consistent normal interpolation
