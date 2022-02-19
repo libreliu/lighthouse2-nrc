@@ -33,7 +33,9 @@
 #define S_NRC_TRAINING_PATH_ENDED 16  // (NRC) this training path has ended
 #define ENOUGH_BOUNCES	S_BOUNCED // or S_BOUNCEDTWICE
 
-#define NRC_PRINTF(fmt, ...)  printf(fmt, ##)
+// #define NRC_DUMP(X, ...) 
+#define NRC_DUMP(X, ...)  printf(X "\n", ##__VA_ARGS__)
+
 
 // readability defines; data layout is optimized for 128-bit accesses
 #define PRIMIDX __float_as_int( hitData.z )
@@ -284,8 +286,10 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 	const uint pathIdx = PATHIDX;
 	const uint pixelIdx = pathIdx % (w * h);
 	const uint sampleIdx = pathIdx / (w * h) + pass;
+	const uint nrcTrainingSampleModulus = w * h / NRC_NUMTRAINRAYS;
+	const uint trainSlotIdx = pixelIdx / nrcTrainingSampleModulus;
 
-	printf("(JobIndex=%d, pathLength=%d) Origin: (%f, %f, %f) Direction: (%f, %f, %f) pathIdx=%d pixelIdx = %d\n", jobIndex, pathLength, O4.x, O4.y, O4.z, D4.x, D4.y, D4.z, pathIdx, pixelIdx);
+	NRC_DUMP("(JobIndex=%d, pathLength=%d) Origin: (%f, %f, %f) Direction: (%f, %f, %f) pixelIdx = %d, trainSlotIdx=%d", jobIndex, pathLength, O4.x, O4.y, O4.z, D4.x, D4.y, D4.z, pixelIdx, trainSlotIdx);
 
 	// initialize depth in accumulator for DOF shader
 	// if (pathLength == 1) accumulator[pixelIdx].w += PRIMIDX == NOHIT ? 10000 : HIT_T;
@@ -293,32 +297,32 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 	// use skydome if we didn't hit any geometry
 	if (PRIMIDX == NOHIT)
 	{
-	  printf("(JobIndex=%d, pathLength=%d) didn't hit any geometry\n", jobIndex, pathLength);
+	  NRC_DUMP("(JobIndex=%d, pathLength=%d) didn't hit any geometry", jobIndex, pathLength);
 		float3 tD = -worldToSky.TransformVector( D );
 		float3 skyPixel = FLAGS & S_BOUNCED ? SampleSmallSkydome( tD ) : SampleSkydome( tD );
 
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 0] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 0] = make_float4(
 			/* Ray origin */ RAY_O, /* roughness */ 0.0f
 		);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 1] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 1] = make_float4(
 			/* Inbound ray direction */
 			DSphCoord.x, DSphCoord.y,
 			/* Surface normal X & Y, TODO: better val */
 			0.0f, 0.0f
 		);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 2] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 2] = make_float4(
 			/* diffuse reflectance */
 			-1.0f, -1.0f, -1.0f,
 			/* dummy */
 			0.0f
 		);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 3] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 3] = make_float4(
 			/* specular reflectance */
 			-1.0f, -1.0f, -1.0f,
 			/* dummy */
 			0.0f
 		);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 4] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 4] = make_float4(
 			/* luminance output - represents luminance of this segment; accumulate to get real luminance later */
 			skyPixel * (1.0f / bsdfPdf),
 			/* flags; also some extra stuff, used to calculate contribution accurately
@@ -330,7 +334,7 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 			 */
 			__uint_as_float(FLAGS | S_NRC_TRAINING_PATH_ENDED)
 		);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 5] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 5] = make_float4(
 			/* throughput factor - useless since no next rays exists; 
 			 * (But use S_NRC_TRAINING_PATH_ENDED to determine if we have rays next) */
 			0.0f, 0.0f, 0.0f,
@@ -368,7 +372,7 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 	// stop on light
 	if (shadingData.IsEmissive() /* r, g or b exceeds 1 */)
 	{
-	  printf("(JobIndex=%d, pathLength=%d) hit light\n", jobIndex, pathLength);
+	  NRC_DUMP("(JobIndex=%d, pathLength=%d) hit light\n", jobIndex, pathLength);
 		const float DdotNL = -dot( D, N );
 		float3 contribution = make_float3( 0 ); // initialization required.
 		if (DdotNL > 0 /* lights are not double sided */)
@@ -390,28 +394,28 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 			}
 		}
 
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 0] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 0] = make_float4(
 			/* Ray origin */ RAY_O, /* roughness */ 0.0f
 		);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 1] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 1] = make_float4(
 			/* Inbound ray direction */
 			DSphCoord.x, DSphCoord.y,
 			/* Surface normal X & Y, TODO: better val */
 			NSphCoord.x, NSphCoord.y
 		);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 2] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 2] = make_float4(
 			/* diffuse reflectance */
 			shadingData.color,
 			/* dummy */
 			0.0f
 		);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 3] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 3] = make_float4(
 			/* specular reflectance */
 			-1.0f, -1.0f, -1.0f,
 			/* dummy */
 			0.0f
 		);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 4] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 4] = make_float4(
 			/* luminance output - represents luminance of this segment; accumulate to get real luminance later */
 			contribution,
 			/* flags; also some extra stuff, used to calculate contribution accurately
@@ -423,7 +427,7 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 			*/
 			__uint_as_float(FLAGS | S_NRC_TRAINING_PATH_ENDED)
 		);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 5] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 5] = make_float4(
 			/* throughput factor - useless since no next rays exists; 
 			 * (But use S_NRC_TRAINING_PATH_ENDED to determine if we have rays next) */
 			0.0f, 0.0f, 0.0f,
@@ -461,7 +465,7 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 	// next event estimation: connect eye path to light
 	if ((FLAGS & S_SPECULAR) == 0 && connections != 0) // skip for specular vertices
 	{
-	  printf("(JobIndex=%d, pathLength=%d) emit shadow ray\n", jobIndex, pathLength);
+	  NRC_DUMP("(JobIndex=%d, pathLength=%d) emit shadow ray", jobIndex, pathLength);
 		float pickProb, lightPdf = 0;
 		float3 lightColor, L = RandomPointOnLight( r4.x, r4.y, I, fN * faceDir, pickProb, lightPdf, lightColor ) - I;
 		// float3 lightColor, L = RandomPointOnLightLTree( r4.x, r4.y, seed, I, fN * faceDir, pickProb, lightPdf, lightColor, false ) - I;
@@ -493,29 +497,29 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 
 	// a maxium path length
 	if (pathLength == NRC_MAXTRAINPATHLENGTH) {
-	  printf("(JobIndex=%d, pathLength=%d) reached maximum length\n", jobIndex, pathLength);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 0] = make_float4(
+	  NRC_DUMP("(JobIndex=%d, pathLength=%d) reached maximum length", jobIndex, pathLength);
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 0] = make_float4(
 			/* Ray origin */ RAY_O, /* roughness */ ROUGHNESS
 		);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 1] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 1] = make_float4(
 			/* Inbound ray direction */
 			DSphCoord.x, DSphCoord.y,
 			/* Surface normal X & Y, TODO: better val */
 			NSphCoord.x, NSphCoord.y
 		);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 2] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 2] = make_float4(
 			/* diffuse reflectance */
 			shadingData.color,
 			/* dummy */
 			0.0f
 		);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 3] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 3] = make_float4(
 			/* specular reflectance (TODO: figure out since SPECTINT have only one channel) */
 			shadingData.color,
 			/* dummy */
 			0.0f
 		);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 4] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 4] = make_float4(
 			/* luminance output - represents luminance of this segment; accumulate to get real luminance later */
 			0.0f, 0.0f, 0.0f,
 			/* flags; also some extra stuff, used to calculate contribution accurately
@@ -527,7 +531,7 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 			*/
 			__uint_as_float(FLAGS | S_NRC_TRAINING_PATH_ENDED)
 		);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 5] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 5] = make_float4(
 			/* throughput factor - useless since no next rays exists; 
 			 * (But use S_NRC_TRAINING_PATH_ENDED to determine if we have rays next) */
 			0.0f, 0.0f, 0.0f,
@@ -550,31 +554,31 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 	// TODO: check if we can change chance but keep bsdfpdf working
 	const float p = ((FLAGS & S_SPECULAR) || ((FLAGS & S_BOUNCED) == 0)) ? 1 : SurvivalProbability( bsdf );
 	if (p < RandomFloat( seed ) || (newBsdfPdf < EPSILON || isnan( newBsdfPdf ))) {
-	  printf("(JobIndex=%d, pathLength=%d) killed by russian roulette\n", jobIndex, pathLength);
+	  NRC_DUMP("(JobIndex=%d, pathLength=%d) killed by russian roulette", jobIndex, pathLength);
 		// killed by Russian roulette, or chance for given direction is too low
 
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 0] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 0] = make_float4(
 			/* Ray origin */ RAY_O, /* roughness */ ROUGHNESS
 		);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 1] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 1] = make_float4(
 			/* Inbound ray direction */
 			DSphCoord.x, DSphCoord.y,
 			/* Surface normal X & Y, TODO: better val */
 			NSphCoord.x, NSphCoord.y
 		);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 2] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 2] = make_float4(
 			/* diffuse reflectance */
 			shadingData.color,
 			/* dummy */
 			0.0f
 		);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 3] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 3] = make_float4(
 			/* specular reflectance */
 			shadingData.color,
 			/* dummy */
 			0.0f
 		);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 4] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 4] = make_float4(
 			/* luminance output - represents luminance of this segment; accumulate to get real luminance later */
 			0.0f, 0.0f, 0.0f,
 			/* flags; also some extra stuff, used to calculate contribution accurately
@@ -586,7 +590,7 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 			*/
 			__uint_as_float(FLAGS | S_NRC_TRAINING_PATH_ENDED)
 		);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 5] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 5] = make_float4(
 			/* throughput factor - useless since no next rays exists; 
 			 * (But use S_NRC_TRAINING_PATH_ENDED to determine if we have rays next) */
 			0.0f, 0.0f, 0.0f,
@@ -597,7 +601,7 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 	} else {
 		// write extension ray, with compaction. Note: nvcc will aggregate automatically, 
 		// https://devblogs.nvidia.com/cuda-pro-tip-optimized-filtering-warp-aggregated-atomics 
-	  printf("(JobIndex=%d, pathLength=%d) write extension ray\n", jobIndex, pathLength);
+	    NRC_DUMP("(JobIndex=%d, pathLength=%d) extension ray, Isect=(%.2f,%.2f,%.2f), Rdir=(%.2f,%.2f,%.2f)", jobIndex, pathLength, I.x, I.y, I.z, R.x, R.y, R.z);
 		const uint extensionRayIdx = atomicAdd( &counters->extensionRays, 1 );
 		const uint packedNormal = PackNormal( fN * faceDir );
 		float3 newThroughput = (1.0f / p) * bsdf * abs( dot( fN, R ) );
@@ -609,28 +613,28 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 		trainPathStates[extensionRayIdx + stride * 2] = make_float4( newThroughput, newBsdfPdf );
 
 		// fill trainBuf
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 0] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 0] = make_float4(
 			/* Ray origin */ RAY_O, /* roughness */ ROUGHNESS
 		);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 1] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 1] = make_float4(
 			/* Inbound ray direction */
 			DSphCoord.x, DSphCoord.y,
 			/* Surface normal X & Y, TODO: better val */
 			NSphCoord.x, NSphCoord.y
 		);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 2] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 2] = make_float4(
 			/* diffuse reflectance */
 			shadingData.color,
 			/* dummy */
 			0.0f
 		);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 3] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 3] = make_float4(
 			/* specular reflectance */
 			shadingData.color,
 			/* dummy */
 			0.0f
 		);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 4] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 4] = make_float4(
 			/* luminance output - represents luminance of this segment; accumulate to get real luminance later */
 			0.0f, 0.0f, 0.0f,
 			/* flags; also some extra stuff, used to calculate contribution accurately
@@ -642,7 +646,7 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 			*/
 			__uint_as_float(FLAGS)
 		);
-		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 5] = make_float4(
+		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 5] = make_float4(
 			/* throughput factor - useless since no next rays exists; 
 			 * (But use S_NRC_TRAINING_PATH_ENDED to determine if we have rays next) */
 			newThroughput,
@@ -664,7 +668,7 @@ __host__ void shadeTrain( const int pathCount, float4* trainBuf, const uint stri
 {
 	const dim3 gridDim( NEXTMULTIPLEOF( pathCount, 128 ) / 128, 1 );
 
-	//printf("[DEBUG] trainBuf=%p, trainPathStates=%p, connections=%p, blueNoise=%p\n", trainBuf, trainPathStates, connections, blueNoise);
+	//NRC_DUMP("[DEBUG] trainBuf=%p, trainPathStates=%p, connections=%p, blueNoise=%p", trainBuf, trainPathStates, connections, blueNoise);
 	shadeTrainKernel << <gridDim.x, 128 >> > (trainBuf, stride, trainPathStates, hits, connections, R0, shift, blueNoise,
 		pass, pathLength, scrwidth, scrheight, spreadAngle, pathCount);
 }

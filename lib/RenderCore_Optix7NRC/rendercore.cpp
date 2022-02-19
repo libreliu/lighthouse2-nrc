@@ -914,121 +914,133 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 	// A primary will be a sample ray if (pathIdx % nrcTrainingSampleModulus == 0) satisfied
 	// uint nrcTrainingSampleModulus = scrwidth * scrheight * scrspp / NRC_NUMTRAINRAYS;
 	// trace nrc rays first
-	uint trainPathCount = NRC_NUMTRAINRAYS;
-	for (int trainPathLength = 1; trainPathLength <= NRC_MAXTRAINPATHLENGTH; trainPathLength++) {
-		cudaEventRecord( nrcTrainTraceStart[trainPathLength - 1] );
-		if (trainPathLength == 1)
-		{
-			// spawn and extend camera rays
-			InitCountersForExtend(trainPathCount);
-			// NOTE: use 1spp here
-			CHK_OPTIX( optixLaunch( pipeline, 0, d_params[4], sizeof( Params ), &sbt, params.scrsize.x, params.scrsize.y, 1 ) );
-		}
-		else
-		{
-			// extend bounced paths
-			// if (pathLength == 2) coreStats.bounce1RayCount = pathCount; else coreStats.deepRayCount += pathCount;
-			InitCountersSubsequent();
-			CHK_OPTIX( optixLaunch( pipeline, 0, d_params[1], sizeof( Params ), &sbt, trainPathCount, 1, 1 ) );
-		}
-		cudaEventRecord( nrcTrainTraceEnd[trainPathLength - 1] );
 
-		cudaEventRecord( nrcTrainShadeStart[trainPathLength - 1] );
-		shadeTrain( trainPathCount, trainBuffer->DevPtr(), NRC_NUMTRAINRAYS,
-			pathStateBuffer->DevPtr(), hitBuffer->DevPtr(), noDirectLightsInScene ? 0 : connectionBuffer->DevPtr(),
-			RandomUInt( camRNGseed ) + trainPathLength * 91771, shiftSeed, blueNoise->DevPtr(), samplesTaken, trainPathLength, scrwidth, scrheight, view.spreadAngle );
-		cudaEventRecord( nrcTrainShadeEnd[trainPathLength - 1] );
 
-		CHK_CUDA( cudaStreamSynchronize(0) );
-		counterBuffer->CopyToHost();
-		counters = counterBuffer->HostPtr()[0];
-		trainPathCount = counters.extensionRays;
-		printf("Train path count: %d (pathLength=%d)\n", trainPathCount, trainPathLength);
-		if (trainPathCount == 0) break;
+	// TODO: 大bug，trainBuf 没有维护 counter！ 这样不知道现在有多少 ray 在中间了
+	bool traceTrainRays = true;
+	if (traceTrainRays) {
+		uint trainPathCount = NRC_NUMTRAINRAYS;
+		for (int trainPathLength = 1; trainPathLength <= NRC_MAXTRAINPATHLENGTH; trainPathLength++) {
+			cudaEventRecord(nrcTrainTraceStart[trainPathLength - 1]);
+			if (trainPathLength == 1)
+			{
+				// spawn and extend camera rays
+				InitCountersForExtend(trainPathCount);
+				// NOTE: use 1spp here
+				CHK_OPTIX(optixLaunch(pipeline, 0, d_params[4], sizeof(Params), &sbt, params.scrsize.x, params.scrsize.y, 1));
+			}
+			else
+			{
+				// extend bounced paths
+				// if (pathLength == 2) coreStats.bounce1RayCount = pathCount; else coreStats.deepRayCount += pathCount;
+				InitCountersSubsequent();
+				CHK_OPTIX(optixLaunch(pipeline, 0, d_params[1], sizeof(Params), &sbt, trainPathCount, 1, 1));
+			}
+			cudaEventRecord(nrcTrainTraceEnd[trainPathLength - 1]);
 
-		// trace shadow rays now if the next loop iteration could overflow the buffer.
-		uint maxShadowRays = connectionBuffer->GetSize() / 3;
-		if ((trainPathCount + counters.shadowRays) >= maxShadowRays) if (counters.shadowRays > 0)
-		{
-			CHK_OPTIX( optixLaunch( pipeline, 0, d_params[3], sizeof( Params ), &sbt, counters.shadowRays, 1, 1 ) );
-			counterBuffer->HostPtr()[0].shadowRays = 0;
-			counterBuffer->CopyToDevice();
-			printf( "WARNING: connection buffer overflowed.\n" ); // we should not have to do this; handled here to be conservative.
+			cudaEventRecord(nrcTrainShadeStart[trainPathLength - 1]);
+			shadeTrain(trainPathCount, trainBuffer->DevPtr(), NRC_NUMTRAINRAYS,
+				pathStateBuffer->DevPtr(), hitBuffer->DevPtr(), noDirectLightsInScene ? 0 : connectionBuffer->DevPtr(),
+				RandomUInt(camRNGseed) + trainPathLength * 91771, shiftSeed, blueNoise->DevPtr(), samplesTaken, trainPathLength, scrwidth, scrheight, view.spreadAngle);
+			cudaEventRecord(nrcTrainShadeEnd[trainPathLength - 1]);
+
+			CHK_CUDA(cudaStreamSynchronize(0));
+			counterBuffer->CopyToHost();
+			counters = counterBuffer->HostPtr()[0];
+			trainPathCount = counters.extensionRays;
+			printf("Train path count: %d (pathLength=%d)\n", trainPathCount, trainPathLength);
+			if (trainPathCount == 0) break;
+
+			// trace shadow rays now if the next loop iteration could overflow the buffer.
+			uint maxShadowRays = connectionBuffer->GetSize() / 3;
+			if ((trainPathCount + counters.shadowRays) >= maxShadowRays) if (counters.shadowRays > 0)
+			{
+				CHK_OPTIX(optixLaunch(pipeline, 0, d_params[3], sizeof(Params), &sbt, counters.shadowRays, 1, 1));
+				counterBuffer->HostPtr()[0].shadowRays = 0;
+				counterBuffer->CopyToDevice();
+				printf("WARNING: connection buffer overflowed.\n"); // we should not have to do this; handled here to be conservative.
+			}
 		}
+		// connect to light sources
+		cudaEventRecord(nrcTrainShadowStart);
+		if (counters.shadowRays > 0)
+		{
+			CHK_OPTIX(optixLaunch(pipeline, 0, d_params[3], sizeof(Params), &sbt, counters.shadowRays, 1, 1));
+		}
+		cudaEventRecord(nrcTrainShadowEnd);
+		printf("NRC training rays tracing phase done. \n");
 	}
-	// connect to light sources
-	cudaEventRecord( nrcTrainShadowStart );
-	if (counters.shadowRays > 0)
-	{
-		CHK_OPTIX( optixLaunch( pipeline, 0, d_params[3], sizeof( Params ), &sbt, counters.shadowRays, 1, 1 ) );
-	}
-	cudaEventRecord( nrcTrainShadowEnd );
-	printf("NRC training rays tracing phase done. \n");
+
 
 	// trace screen rays
-	uint pathCount = scrwidth * scrheight * scrspp;
-	coreStats.deepRayCount = 0;
-	coreStats.primaryRayCount = pathCount;
-	for (int pathLength = 1; pathLength <= MAXPATHLENGTH; pathLength++)
-	{
-		// generate / extend
-		cudaEventRecord( traceStart[pathLength - 1] );
-		if (pathLength == 1)
+	bool traceScreenRays = false;
+	if (traceScreenRays) {
+		uint pathCount = scrwidth * scrheight * scrspp;
+		coreStats.deepRayCount = 0;
+		coreStats.primaryRayCount = pathCount;
+		for (int pathLength = 1; pathLength <= MAXPATHLENGTH; pathLength++)
 		{
-			// spawn and extend camera rays
-			InitCountersForExtend( pathCount );
-			CHK_OPTIX( optixLaunch( pipeline, 0, d_params[0], sizeof( Params ), &sbt, params.scrsize.x, params.scrsize.y * scrspp, 1 ) );
+			// generate / extend
+			cudaEventRecord(traceStart[pathLength - 1]);
+			if (pathLength == 1)
+			{
+				// spawn and extend camera rays
+				InitCountersForExtend(pathCount);
+				CHK_OPTIX(optixLaunch(pipeline, 0, d_params[0], sizeof(Params), &sbt, params.scrsize.x, params.scrsize.y * scrspp, 1));
+			}
+			else
+			{
+				// extend bounced paths
+				if (pathLength == 2) coreStats.bounce1RayCount = pathCount; else coreStats.deepRayCount += pathCount;
+				InitCountersSubsequent();
+				CHK_OPTIX(optixLaunch(pipeline, 0, d_params[1], sizeof(Params), &sbt, pathCount, 1, 1));
+			}
+			cudaEventRecord(traceEnd[pathLength - 1]);
+			// shade
+			cudaEventRecord(shadeStart[pathLength - 1]);
+			shade(pathCount, accumulator->DevPtr(), scrwidth * scrheight * scrspp,
+				pathStateBuffer->DevPtr(), hitBuffer->DevPtr(), noDirectLightsInScene ? 0 : connectionBuffer->DevPtr(),
+				RandomUInt(camRNGseed) + pathLength * 91771, shiftSeed, blueNoise->DevPtr(), samplesTaken,
+				probePos.x + scrwidth * probePos.y, pathLength, scrwidth, scrheight, view.spreadAngle);
+			cudaEventRecord(shadeEnd[pathLength - 1]);
+			counterBuffer->CopyToHost();
+			counters = counterBuffer->HostPtr()[0];
+			pathCount = counters.extensionRays;
+			if (pathCount == 0) break;
+			// trace shadow rays now if the next loop iteration could overflow the buffer.
+			uint maxShadowRays = connectionBuffer->GetSize() / 3;
+			if ((pathCount + counters.shadowRays) >= maxShadowRays) if (counters.shadowRays > 0)
+			{
+				CHK_OPTIX(optixLaunch(pipeline, 0, d_params[2], sizeof(Params), &sbt, counters.shadowRays, 1, 1));
+				counterBuffer->HostPtr()[0].shadowRays = 0;
+				counterBuffer->CopyToDevice();
+				printf("WARNING: connection buffer overflowed.\n"); // we should not have to do this; handled here to be conservative.
+			}
 		}
-		else
+		// connect to light sources
+		cudaEventRecord(shadowStart);
+		if (counters.shadowRays > 0)
 		{
-			// extend bounced paths
-			if (pathLength == 2) coreStats.bounce1RayCount = pathCount; else coreStats.deepRayCount += pathCount;
-			InitCountersSubsequent();
-			CHK_OPTIX( optixLaunch( pipeline, 0, d_params[1], sizeof( Params ), &sbt, pathCount, 1, 1 ) );
+			CHK_OPTIX(optixLaunch(pipeline, 0, d_params[2], sizeof(Params), &sbt, counters.shadowRays, 1, 1));
 		}
-		cudaEventRecord( traceEnd[pathLength - 1] );
-		// shade
-		cudaEventRecord( shadeStart[pathLength - 1] );
-		shade( pathCount, accumulator->DevPtr(), scrwidth * scrheight * scrspp,
-			pathStateBuffer->DevPtr(), hitBuffer->DevPtr(), noDirectLightsInScene ? 0 : connectionBuffer->DevPtr(),
-			RandomUInt( camRNGseed ) + pathLength * 91771, shiftSeed, blueNoise->DevPtr(), samplesTaken,
-			probePos.x + scrwidth * probePos.y, pathLength, scrwidth, scrheight, view.spreadAngle );
-		cudaEventRecord( shadeEnd[pathLength - 1] );
-		counterBuffer->CopyToHost();
-		counters = counterBuffer->HostPtr()[0];
-		pathCount = counters.extensionRays;
-		if (pathCount == 0) break;
-		// trace shadow rays now if the next loop iteration could overflow the buffer.
-		uint maxShadowRays = connectionBuffer->GetSize() / 3;
-		if ((pathCount + counters.shadowRays) >= maxShadowRays) if (counters.shadowRays > 0)
-		{
-			CHK_OPTIX( optixLaunch( pipeline, 0, d_params[2], sizeof( Params ), &sbt, counters.shadowRays, 1, 1 ) );
-			counterBuffer->HostPtr()[0].shadowRays = 0;
-			counterBuffer->CopyToDevice();
-			printf( "WARNING: connection buffer overflowed.\n" ); // we should not have to do this; handled here to be conservative.
-		}
+		cudaEventRecord(shadowEnd);
+		// gather ray tracing statistics
+		coreStats.totalShadowRays = counters.shadowRays;
+		coreStats.totalExtensionRays = counters.totalExtensionRays;
+		// finalize statistics
+		cudaStreamSynchronize(0);
+		coreStats.totalRays = coreStats.totalExtensionRays + coreStats.totalShadowRays;
+		coreStats.traceTime0 = CUDATools::Elapsed(traceStart[0], traceEnd[0]);
+		coreStats.traceTime1 = CUDATools::Elapsed(traceStart[1], traceEnd[1]);
+		coreStats.shadowTraceTime = CUDATools::Elapsed(shadowStart, shadowEnd);
+		// probe information
+		coreStats.SetProbeInfo(counters.probedInstid, counters.probedTriid, counters.probedDist);
+		const float3 P = RayTarget(probePos.x, probePos.y, 0.5f, 0.5f, make_int2(scrwidth, scrheight), view.distortion, view.p1, right, up);
+		const float3 D = normalize(P - view.pos);
+		coreStats.probedWorldPos = view.pos + counters.probedDist * D;
 	}
-	// connect to light sources
-	cudaEventRecord( shadowStart );
-	if (counters.shadowRays > 0)
-	{
-		CHK_OPTIX( optixLaunch( pipeline, 0, d_params[2], sizeof( Params ), &sbt, counters.shadowRays, 1, 1 ) );
-	}
-	cudaEventRecord( shadowEnd );
-	// gather ray tracing statistics
-	coreStats.totalShadowRays = counters.shadowRays;
-	coreStats.totalExtensionRays = counters.totalExtensionRays;
-	// finalize statistics
-	cudaStreamSynchronize( 0 );
-	coreStats.totalRays = coreStats.totalExtensionRays + coreStats.totalShadowRays;
-	coreStats.traceTime0 = CUDATools::Elapsed( traceStart[0], traceEnd[0] );
-	coreStats.traceTime1 = CUDATools::Elapsed( traceStart[1], traceEnd[1] );
-	coreStats.shadowTraceTime = CUDATools::Elapsed( shadowStart, shadowEnd );
-	// probe information
-	coreStats.SetProbeInfo( counters.probedInstid, counters.probedTriid, counters.probedDist );
-	const float3 P = RayTarget( probePos.x, probePos.y, 0.5f, 0.5f, make_int2( scrwidth, scrheight ), view.distortion, view.p1, right, up );
-	const float3 D = normalize( P - view.pos );
-	coreStats.probedWorldPos = view.pos + counters.probedDist * D;
+
+
 }
 
 //  +-----------------------------------------------------------------------------+
