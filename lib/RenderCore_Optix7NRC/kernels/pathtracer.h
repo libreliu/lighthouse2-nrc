@@ -33,8 +33,8 @@
 #define S_NRC_TRAINING_PATH_ENDED 16  // (NRC) this training path has ended
 #define ENOUGH_BOUNCES	S_BOUNCED // or S_BOUNCEDTWICE
 
-// #define NRC_DUMP(X, ...) 
-#define NRC_DUMP(X, ...)  printf(X "\n", ##__VA_ARGS__)
+#define NRC_DUMP(X, ...) 
+//#define NRC_DUMP(X, ...)  printf(X "\n", ##__VA_ARGS__)
 
 
 // readability defines; data layout is optimized for 128-bit accesses
@@ -263,7 +263,7 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 	float4* trainPathStates, float4* hits, float4* connections,
 	const uint R0, const uint shift, const uint* blueNoise, const int pass,
 	const int pathLength, const int w, const int h, const float spreadAngle,
-	const uint pathCount )
+	const uint pathCount, float4* debugView )
 {
 	// respect boundaries
 	int jobIndex = threadIdx.x + blockIdx.x * blockDim.x;
@@ -286,7 +286,7 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 	const uint pathIdx = PATHIDX;
 	const uint pixelIdx = pathIdx % (w * h);
 	const uint sampleIdx = pathIdx / (w * h) + pass;
-	const uint nrcTrainingSampleModulus = w * h / NRC_NUMTRAINRAYS;
+	const uint nrcTrainingSampleModulus = (w * h) / NRC_NUMTRAINRAYS;
 	const uint trainSlotIdx = pixelIdx / nrcTrainingSampleModulus;
 
 	NRC_DUMP("(JobIndex=%d, pathLength=%d) Origin: (%f, %f, %f) Direction: (%f, %f, %f) pixelIdx = %d, trainSlotIdx=%d", jobIndex, pathLength, O4.x, O4.y, O4.z, D4.x, D4.y, D4.z, pixelIdx, trainSlotIdx);
@@ -341,6 +341,12 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 			/* postponed bsdfPdf */
 			1.0f
 		);
+
+#ifdef NRC_ENABLE_DEBUG_VIEW_PRIMARY
+		if (debugView != nullptr && pathLength == 1) {
+			debugView[pixelIdx] = make_float4(skyPixel * (1.0f / bsdfPdf), 0);
+		}
+#endif
 		
 		return;
 	}
@@ -597,6 +603,11 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 			/* postponed bsdfPdf */
 			1.0f
 		);
+#ifdef NRC_ENABLE_DEBUG_VIEW_PRIMARY
+		if (debugView != nullptr && pathLength == 1) {
+			debugView[pixelIdx] = make_float4(shadingData.color * (1.0f / bsdfPdf), 0);
+		}
+#endif
 
 	} else {
 		// write extension ray, with compaction. Note: nvcc will aggregate automatically, 
@@ -653,6 +664,12 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 			/* postponed bsdfPdf */
 			newBsdfPdf
 		);
+
+#ifdef NRC_ENABLE_DEBUG_VIEW_PRIMARY
+		if (debugView != nullptr && pathLength == 1) {
+			debugView[pixelIdx] = make_float4(shadingData.color * (1.0f / bsdfPdf), 0);
+		}
+#endif
 	}
 
 
@@ -664,13 +681,13 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 //  +-----------------------------------------------------------------------------+
 __host__ void shadeTrain( const int pathCount, float4* trainBuf, const uint stride,
 	float4* trainPathStates, float4* hits, float4* connections,
-	const uint R0, const uint shift, const uint* blueNoise, const int pass, const int pathLength, const int scrwidth, const int scrheight, const float spreadAngle )
+	const uint R0, const uint shift, const uint* blueNoise, const int pass, const int pathLength, const int scrwidth, const int scrheight, const float spreadAngle, float4* debugView)
 {
 	const dim3 gridDim( NEXTMULTIPLEOF( pathCount, 128 ) / 128, 1 );
 
 	//NRC_DUMP("[DEBUG] trainBuf=%p, trainPathStates=%p, connections=%p, blueNoise=%p", trainBuf, trainPathStates, connections, blueNoise);
 	shadeTrainKernel << <gridDim.x, 128 >> > (trainBuf, stride, trainPathStates, hits, connections, R0, shift, blueNoise,
-		pass, pathLength, scrwidth, scrheight, spreadAngle, pathCount);
+		pass, pathLength, scrwidth, scrheight, spreadAngle, pathCount, debugView);
 }
 
 

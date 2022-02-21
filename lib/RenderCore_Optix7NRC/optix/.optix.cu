@@ -110,10 +110,10 @@ static __inline __device__ void generateEyeRay( float3& O, float3& D, const uint
 #endif
 
 // Use 1 spp in the launch & here
-__device__ void setupPrimaryRayNRCTrain( const uint pixelIdx )
+__device__ void setupPrimaryRayNRCTrain( const uint pixelIdx, const uint stride )
 {
-	const uint nrcTrainingSampleModulus = params.scrsize.x * params.scrsize.y / NRC_NUMTRAINRAYS;
-	const uint stride = NRC_NUMTRAINRAYS;
+	const uint nrcTrainingSampleModulus = (params.scrsize.x * params.scrsize.y) / NRC_NUMTRAINRAYS;
+	// TODO: check stride size
 	const uint sampleIdx = params.pass; // TODO: check this
 	if (pixelIdx % nrcTrainingSampleModulus != 0) {
 		return;
@@ -208,7 +208,7 @@ extern "C" __global__ void __raygen__rg()
 	case Params::SPAWN_SECONDARY: /* secondary rays */ setupSecondaryRay( rayIdx, stride ); break;
 	case Params::SPAWN_SHADOW: /* shadow rays */ generateShadowRay( rayIdx, stride ); break;
 	case Params::SPAWN_SHADOW_NRC: /* shadow rays (NRC train) */ generateShadowRayNRCTrain( rayIdx, stride ); break;
-	case Params::SPAWN_PRIMARY_NRC: /* primary rays (NRC) */ setupPrimaryRayNRCTrain( rayIdx ); break;
+	case Params::SPAWN_PRIMARY_NRC: /* primary rays (NRC) */ setupPrimaryRayNRCTrain( rayIdx, stride ); break;
 	}
 }
 

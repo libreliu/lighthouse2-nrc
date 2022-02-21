@@ -30,7 +30,7 @@ void shade( const int pathCount, float4* accumulator, const uint stride,
 	const int probePixelIdx, const int pathLength, const int w, const int h, const float spreadAngle );
 void shadeTrain(const int pathCount, float4* trainBuf, const uint stride,
 	float4* trainPathStates, float4* hits, float4* connections,
-	const uint R0, const uint shift, const uint* blueNoise, const int pass, const int pathLength, const int scrwidth, const int scrheight, const float spreadAngle);
+	const uint R0, const uint shift, const uint* blueNoise, const int pass, const int pathLength, const int scrwidth, const int scrheight, const float spreadAngle, float4* debugView);
 void finalizeRender( const float4* accumulator, const int w, const int h, const int spp );
 
 } // namespace lh2core
@@ -353,7 +353,7 @@ void RenderCore::SetTarget( GLTexture* target, const uint spp )
 		params.hitData = hitBuffer->DevPtr();
 		params.pathStates = pathStateBuffer->DevPtr();
 		params.nrcTrainData = trainBuffer->DevPtr();
-		printf( "buffers resized for %i pixels @ %i samples.\n", maxPixels, scrspp );
+		printf( "buffers resized for %i pixels (%d x %d) @ %i samples.\n", maxPixels, scrwidth, scrheight, scrspp );
 	}
 	// clear the accumulator
 	accumulator->Clear( ON_DEVICE );
@@ -918,6 +918,7 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 
 	// TODO: 大bug，trainBuf 没有维护 counter！ 这样不知道现在有多少 ray 在中间了
 	bool traceTrainRays = true;
+	bool visualizeTrainRays = true;
 	if (traceTrainRays) {
 		uint trainPathCount = NRC_NUMTRAINRAYS;
 		for (int trainPathLength = 1; trainPathLength <= NRC_MAXTRAINPATHLENGTH; trainPathLength++) {
@@ -941,7 +942,8 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 			cudaEventRecord(nrcTrainShadeStart[trainPathLength - 1]);
 			shadeTrain(trainPathCount, trainBuffer->DevPtr(), NRC_NUMTRAINRAYS,
 				pathStateBuffer->DevPtr(), hitBuffer->DevPtr(), noDirectLightsInScene ? 0 : connectionBuffer->DevPtr(),
-				RandomUInt(camRNGseed) + trainPathLength * 91771, shiftSeed, blueNoise->DevPtr(), samplesTaken, trainPathLength, scrwidth, scrheight, view.spreadAngle);
+				RandomUInt(camRNGseed) + trainPathLength * 91771, shiftSeed, blueNoise->DevPtr(), samplesTaken, trainPathLength, scrwidth,
+				scrheight, view.spreadAngle, visualizeTrainRays ? accumulator->DevPtr() : nullptr);
 			cudaEventRecord(nrcTrainShadeEnd[trainPathLength - 1]);
 
 			CHK_CUDA(cudaStreamSynchronize(0));
