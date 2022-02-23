@@ -116,9 +116,10 @@ struct Counters
 	int probedInstid;
 	int probedTriid;
 	float probedDist;
-	// NOTE: not needed, since we now do it separately
-	// uint nrcTrainExtensionRays;
-	// uint nrcTrainShadowRays;
+};
+
+struct NRCCounters {
+	uint nrcActualTrainRays;
 };
 
 // path tracer parameters
@@ -242,6 +243,7 @@ void stageMemcpy( void* d, void* s, int n );
 void stageLightTree( LightCluster* t );
 void pushStagedCopies();
 void SetCounters( Counters* p );
+void SetNRCCounters( NRCCounters* p );
 
 } // namespace lh2core
 

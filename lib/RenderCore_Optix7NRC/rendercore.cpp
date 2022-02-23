@@ -249,6 +249,8 @@ void RenderCore::Init()
 	// prepare counters for persistent threads
 	counterBuffer = new CoreBuffer<Counters>( 1, ON_DEVICE | ON_HOST );
 	SetCounters( counterBuffer->DevPtr() );
+	nrcCounterBuffer = new CoreBuffer<NRCCounters>(1, ON_DEVICE | ON_HOST);
+	SetNRCCounters(nrcCounterBuffer->DevPtr());
 	// prepare the bluenoise data
 	const uchar* data8 = (const uchar*)sob256_64; // tables are 8 bit per entry
 	uint* data32 = new uint[65536 * 5]; // we want a full uint per entry
@@ -920,7 +922,11 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 	bool traceTrainRays = true;
 	bool visualizeTrainRays = true;
 	if (traceTrainRays) {
+		nrcCounterBuffer->HostPtr()[0].nrcActualTrainRays = 0;
+		nrcCounterBuffer->CopyToDevice();
+
 		uint trainPathCount = NRC_NUMTRAINRAYS;
+		trainBuffer->Clear( ON_DEVICE );
 		for (int trainPathLength = 1; trainPathLength <= NRC_MAXTRAINPATHLENGTH; trainPathLength++) {
 			cudaEventRecord(nrcTrainTraceStart[trainPathLength - 1]);
 			if (trainPathLength == 1)
@@ -970,6 +976,10 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 			CHK_OPTIX(optixLaunch(pipeline, 0, d_params[3], sizeof(Params), &sbt, counters.shadowRays, 1, 1));
 		}
 		cudaEventRecord(nrcTrainShadowEnd);
+
+		// Aggregate rays
+
+
 		printf("NRC training rays tracing phase done. \n");
 	}
 

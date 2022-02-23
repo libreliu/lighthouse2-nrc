@@ -213,6 +213,10 @@ __global__ void InitCountersSubsequent_Kernel()
 __host__ void InitCountersSubsequent() { InitCountersSubsequent_Kernel << <1, 32 >> > (); }
 __host__ void SetCounters( Counters* p ) { cudaMemcpyToSymbol( counters, &p, sizeof( void* ) ); }
 
+// nrc auxiliary counters
+static __device__ NRCCounters* nrcCounters;
+__host__ void SetNRCCounters( NRCCounters* p ) { cudaMemcpyToSymbol(nrcCounters, &p, sizeof(void*)); }
+
 // functional blocks
 #include "tools_shared.h"
 #include "sampling_shared.h"
@@ -221,6 +225,87 @@ __host__ void SetCounters( Counters* p ) { cudaMemcpyToSymbol( counters, &p, siz
 #include "bsdf.h"
 #include "pathtracer.h"
 #include "finalize_shared.h"
+
+#if __CUDA_ARCH__ > 700 // Volta deliberately excluded
+__global__  __launch_bounds__(128 /* max block size */, 2 /* min blocks per sm TURING */)
+#else
+__global__  __launch_bounds__(256 /* max block size */, 2 /* min blocks per sm, PASCAL, VOLTA */)
+#endif
+__global__ void PrepareNRCTrainData_Kernel( float4* trainBuf, float4* trainInputBuf, float4* debugView ) {
+	int jobIndex = threadIdx.x + blockIdx.x * blockDim.x;
+	if (jobIndex >= NRC_NUMTRAINRAYS) {
+		return;
+	}
+
+	float3 luminances[NRC_MAXTRAINPATHLENGTH];
+	bool previousDataValid = false;
+	uint lastValidPathLength = 0;
+
+	for (uint pathLength = NRC_MAXTRAINPATHLENGTH; pathLength >= 1; pathLength--) {
+		const float4 data0 = trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 0];
+		const float4 data1 = trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 1];
+		const float4 data2 = trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 2];
+		const float4 data3 = trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 3];
+		const float4 data4 = trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 4];
+		const float4 data5 = trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 5];
+
+		const uint flags = __float_as_uint(data4.w);
+
+		if ((flags & S_NRC_DATA_VALID) > 0 && !previousDataValid) {
+			// This is the last bounce, reason:
+			// 1. NRC_MAXTRAINPATHLENGTH exceed, or killed by russian roulette
+			//   (in this case no luminances other than direct lighting will occur)
+			// 2. hit emissive material
+			// 3. hit skybox
+
+			// NOTE: possible sources
+			// 1. emissive
+			// 2. hit skybox
+			// 3. direct lighting from one of the lights
+			float3 directLuminance = make_float3(data4.x, data4.y, data4.z);
+			
+			luminances[pathLength - 1] = directLuminance;
+			previousDataValid = true;
+			lastValidPathLength = pathLength;
+		}
+		else if ((flags & S_NRC_DATA_VALID) > 0 && previousDataValid) {
+			// NOTE: only direct lighting from one of the lights are possible here
+			float3 directLuminance = make_float3(data4.x, data4.y, data4.z);
+
+			float3 segmentThroughput = make_float3(data5.x, data5.y, data5.z);
+			float3 indirectLuminance = segmentThroughput * luminances[pathLength];
+			luminances[pathLength - 1] = directLuminance + indirectLuminance;
+		}
+		else if ((flags & S_NRC_DATA_VALID) == 0 && previousDataValid) {
+			// illegal data encountered, TODO: error recovery
+			NRC_DUMP_WARN("[WARN] illegal data, jobIndex=%d, current pathLength=%d", jobIndex, pathLength);
+			return;
+		}
+	}
+	// TODO: debugView
+
+	if (!previousDataValid) {
+		// TODO: error recovery
+		NRC_DUMP_WARN("[WARN] no valid data, jobIndex=%d", jobIndex);
+		return;
+	}
+
+	for (uint pathLength = lastValidPathLength; pathLength >= 1; pathLength--) {
+		const uint raySegmentIdx = atomicAdd( &nrcCounters->nrcActualTrainRays, 1);
+
+		const float4 data0 = trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 0];
+		const float4 data1 = trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 1];
+		const float4 data2 = trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 2];
+		const float4 data3 = trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 3];
+		const float4 data4 = trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 4];
+		const float4 data5 = trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 5];
+
+		// TODO: ray origin => ray intersection point
+		// float3 intersection
+	}
+}
+
+__host__ void PrepareNRCTrainData() {}
 
 } // namespace lh2core
 

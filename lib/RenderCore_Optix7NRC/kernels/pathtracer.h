@@ -30,11 +30,13 @@
 #define S_BOUNCED		2	// path encountered a diffuse vertex
 #define S_VIASPECULAR	4	// path has seen at least one specular vertex
 #define S_BOUNCEDTWICE	8	// this core will stop after two diffuse bounces
-#define S_NRC_TRAINING_PATH_ENDED 16  // (NRC) this training path has ended
+#define S_NRC_TRAINING_PATH_ENDED 16  // (NRC) this training path has ended here
+#define S_NRC_DATA_VALID 32  // (NRC) the data presented is valid
 #define ENOUGH_BOUNCES	S_BOUNCED // or S_BOUNCEDTWICE
 
 #define NRC_DUMP(X, ...) 
 //#define NRC_DUMP(X, ...)  printf(X "\n", ##__VA_ARGS__)
+#define NRC_DUMP_WARN(X, ...)  printf(X "\n", ##__VA_ARGS__)
 
 
 // readability defines; data layout is optimized for 128-bit accesses
@@ -332,7 +334,7 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 			 *	#define S_BOUNCEDTWICE	8	// this core will stop after two diffuse bounces
 			 *	#define S_NRC_TRAINING_PATH_ENDED 16  // (NRC) this training path has ended
 			 */
-			__uint_as_float(FLAGS | S_NRC_TRAINING_PATH_ENDED)
+			__uint_as_float(FLAGS | S_NRC_TRAINING_PATH_ENDED | S_NRC_DATA_VALID)
 		);
 		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 5] = make_float4(
 			/* throughput factor - useless since no next rays exists; 
@@ -411,7 +413,8 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 		);
 		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 2] = make_float4(
 			/* diffuse reflectance */
-			shadingData.color,
+			//shadingData.color,
+			contribution,
 			/* dummy */
 			0.0f
 		);
@@ -431,7 +434,7 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 			*	#define S_BOUNCEDTWICE	8	// this core will stop after two diffuse bounces
 			*	#define S_NRC_TRAINING_PATH_ENDED 16  // (NRC) this training path has ended
 			*/
-			__uint_as_float(FLAGS | S_NRC_TRAINING_PATH_ENDED)
+			__uint_as_float(FLAGS | S_NRC_TRAINING_PATH_ENDED | S_NRC_DATA_VALID)
 		);
 		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 5] = make_float4(
 			/* throughput factor - useless since no next rays exists; 
@@ -535,7 +538,7 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 			*	#define S_BOUNCEDTWICE	8	// this core will stop after two diffuse bounces
 			*	#define S_NRC_TRAINING_PATH_ENDED 16  // (NRC) this training path has ended
 			*/
-			__uint_as_float(FLAGS | S_NRC_TRAINING_PATH_ENDED)
+			__uint_as_float(FLAGS | S_NRC_TRAINING_PATH_ENDED | S_NRC_DATA_VALID)
 		);
 		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 5] = make_float4(
 			/* throughput factor - useless since no next rays exists; 
@@ -594,7 +597,7 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 			*	#define S_BOUNCEDTWICE	8	// this core will stop after two diffuse bounces
 			*	#define S_NRC_TRAINING_PATH_ENDED 16  // (NRC) this training path has ended
 			*/
-			__uint_as_float(FLAGS | S_NRC_TRAINING_PATH_ENDED)
+			__uint_as_float(FLAGS | S_NRC_TRAINING_PATH_ENDED | S_NRC_DATA_VALID)
 		);
 		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 5] = make_float4(
 			/* throughput factor - useless since no next rays exists; 
@@ -655,7 +658,7 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 			*	#define S_BOUNCEDTWICE	8	// this core will stop after two diffuse bounces
 			*	#define S_NRC_TRAINING_PATH_ENDED 16  // (NRC) this training path has ended
 			*/
-			__uint_as_float(FLAGS)
+			__uint_as_float(FLAGS | S_NRC_DATA_VALID)
 		);
 		trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * trainSlotIdx + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 5] = make_float4(
 			/* throughput factor - useless since no next rays exists; 

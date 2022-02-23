@@ -107,12 +107,14 @@ private:
 	CoreBuffer<float4>* skyPixelBuffer = 0;			// skydome texture data
 	CoreBuffer<float4>* accumulator = 0;			// accumulator buffer for the path tracer
 	CoreBuffer<Counters>* counterBuffer = 0;		// counters for wavefront path tracing
+	CoreBuffer<NRCCounters>* nrcCounterBuffer = 0;		// (NRC) counters for wavefront path tracing
 	CoreBuffer<CoreInstanceDesc>* instDescBuffer = 0; // instance descriptor array
 	CoreBuffer<uint>* texel32Buffer = 0;			// texel buffer 0: regular ARGB32 texture data
 	CoreBuffer<float4>* hitBuffer = 0;				// intersection results
 	CoreBuffer<float4>* pathStateBuffer = 0;		// path state buffer
 	CoreBuffer<float4>* connectionBuffer = 0;		// shadow rays
-	CoreBuffer<float4>* trainBuffer = 0;            // training data encoded
+	CoreBuffer<float4>* trainBuffer = 0;            // training data sketchpad
+	CoreBuffer<float4>* trainInputBuffer = 0;       // training data encoded
 	CoreBuffer<OptixInstance>* instanceArray = 0;	// instance descriptors for Optix
 	CoreBuffer<Params>* optixParams;				// parameters to be used in optix code
 	CoreTexDesc* texDescs = 0;						// array of texture descriptors
