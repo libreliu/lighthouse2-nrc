@@ -238,16 +238,17 @@ __global__ void PrepareNRCTrainData_Kernel( float4* trainBuf, float4* trainInput
 	}
 
 	float3 luminances[NRC_MAXTRAINPATHLENGTH];
+	bool luminanceTrained[NRC_MAXTRAINPATHLENGTH];
 	bool previousDataValid = false;
 	uint lastValidPathLength = 0;
 
 	for (uint pathLength = NRC_MAXTRAINPATHLENGTH; pathLength >= 1; pathLength--) {
-		const float4 data0 = trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 0];
-		const float4 data1 = trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 1];
-		const float4 data2 = trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 2];
-		const float4 data3 = trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 3];
-		const float4 data4 = trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 4];
-		const float4 data5 = trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 5];
+		const float4 data0 = NRC_TRAINBUF(jobIndex, pathLength, 0);
+		const float4 data1 = NRC_TRAINBUF(jobIndex, pathLength, 1);
+		const float4 data2 = NRC_TRAINBUF(jobIndex, pathLength, 2);
+		const float4 data3 = NRC_TRAINBUF(jobIndex, pathLength, 3);
+		const float4 data4 = NRC_TRAINBUF(jobIndex, pathLength, 4);
+		const float4 data5 = NRC_TRAINBUF(jobIndex, pathLength, 5);
 
 		const uint flags = __float_as_uint(data4.w);
 
@@ -265,6 +266,7 @@ __global__ void PrepareNRCTrainData_Kernel( float4* trainBuf, float4* trainInput
 			float3 directLuminance = make_float3(data4.x, data4.y, data4.z);
 			
 			luminances[pathLength - 1] = directLuminance;
+			luminanceTrained[pathLength - 1] = ((flags & S_NRC_TRAINING_DISCARD) == 0);
 			previousDataValid = true;
 			lastValidPathLength = pathLength;
 		}
@@ -275,6 +277,7 @@ __global__ void PrepareNRCTrainData_Kernel( float4* trainBuf, float4* trainInput
 			float3 segmentThroughput = make_float3(data5.x, data5.y, data5.z);
 			float3 indirectLuminance = segmentThroughput * luminances[pathLength];
 			luminances[pathLength - 1] = directLuminance + indirectLuminance;
+			luminanceTrained[pathLength - 1] = ((flags & S_NRC_TRAINING_DISCARD) == 0);
 		}
 		else if ((flags & S_NRC_DATA_VALID) == 0 && previousDataValid) {
 			// illegal data encountered, TODO: error recovery
@@ -291,17 +294,28 @@ __global__ void PrepareNRCTrainData_Kernel( float4* trainBuf, float4* trainInput
 	}
 
 	for (uint pathLength = lastValidPathLength; pathLength >= 1; pathLength--) {
+		if (!luminanceTrained[pathLength - 1]) {
+			continue;
+		}
+
+		const float4 data0 = NRC_TRAINBUF(jobIndex, pathLength, 0);
+		const float4 data1 = NRC_TRAINBUF(jobIndex, pathLength, 1);
+		const float4 data2 = NRC_TRAINBUF(jobIndex, pathLength, 2);
+		const float4 data3 = NRC_TRAINBUF(jobIndex, pathLength, 3);
+		const float4 data4 = NRC_TRAINBUF(jobIndex, pathLength, 4);
+		const float4 data5 = NRC_TRAINBUF(jobIndex, pathLength, 5);
+
 		const uint raySegmentIdx = atomicAdd( &nrcCounters->nrcActualTrainRays, 1);
 
-		const float4 data0 = trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 0];
-		const float4 data1 = trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 1];
-		const float4 data2 = trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 2];
-		const float4 data3 = trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 3];
-		const float4 data4 = trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 4];
-		const float4 data5 = trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * jobIndex + (pathLength - 1) * NRC_TRAINCOMPONENTSIZE + 5];
+		const float3 rayIsect = make_float3(data0.x, data0.y, data0.z);
+		const float roughness = data0.w;
+		const float2 rayDir = make_float2(data1.x, data1.y);
+		const float2 normalDir = make_float2(data1.x, data1.y);
+		const float3 diffuseRefl = make_float3(data2.x, data2.y, data2.z);
+		const float3 specularRefl = make_float3(data3.x, data3.y, data3.z);
+		const float3 luminance = luminances[pathLength - 1];
 
-		// TODO: ray origin => ray intersection point
-		// float3 intersection
+		// TODO: add encode
 	}
 }
 
