@@ -70,5 +70,6 @@
     <CudaCompile Include="kernels\.cuda.cu">
       <Filter>CUDA</Filter>
     </CudaCompile>
+    <CudaCompile Include="nrcNet.cu" />
   </ItemGroup>
 </Project>

@@ -32,11 +32,11 @@
 #define S_BOUNCEDTWICE	8	// this core will stop after two diffuse bounces
 #define S_NRC_TRAINING_PATH_ENDED 16  // (NRC) this training path has ended here
 #define S_NRC_DATA_VALID 32           // (NRC) the data presented is valid
-#define S_NRC_TRAINING_DISCARD 32     // (NRC) this training sample should be discarded
+#define S_NRC_TRAINING_DISCARD 64     // (NRC) this training sample should be discarded
 #define ENOUGH_BOUNCES	S_BOUNCED // or S_BOUNCEDTWICE
 
-#define NRC_DUMP(X, ...) 
-//#define NRC_DUMP(X, ...)  printf(X "\n", ##__VA_ARGS__)
+//#define NRC_DUMP(X, ...) 
+#define NRC_DUMP(X, ...)  printf(X "\n", ##__VA_ARGS__)
 #define NRC_DUMP_WARN(X, ...)  printf(X "\n", ##__VA_ARGS__)
 
 
@@ -52,12 +52,15 @@
 
 // nrc readability defines
 #define NRC_TRAINBUF(train_slot_idx, path_length, index) \
-	trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * train_slot_idx + (path_length - 1) * NRC_TRAINCOMPONENTSIZE + index]
+	trainBuf[(NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE) * (train_slot_idx) + ((path_length) - 1) * NRC_TRAINCOMPONENTSIZE + (index)]
 
 // Full sphere instead of half, different from Spherical* utility functions
 LH2_DEVFUNC float2 toSphericalCoord(const float3& v)
 {
+  /* -PI ~ PI */
   const float theta = std::atan2(v.y, v.x);
+
+  /* -PI/2 ~ PI/2 */
   const float phi = std::asin(clamp(v.z, -1.f, 1.f));
   return make_float2(theta, phi);
 }

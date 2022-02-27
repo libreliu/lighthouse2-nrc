@@ -27,8 +27,9 @@
 // NRC-specific settings
 #define NRC_MAXTRAINPATHLENGTH  5           // Should <= MAXPATHLENGTH
 //#define NRC_NUMTRAINRAYS        25
-#define NRC_NUMTRAINRAYS        10000
+#define NRC_NUMTRAINRAYS       10
 #define NRC_TRAINCOMPONENTSIZE  6           // how many float4 one struct component occupies
+#define NRC_INPUTDIM  64
 
 #define NRC_ENABLE_DEBUG_VIEW_PRIMARY
 

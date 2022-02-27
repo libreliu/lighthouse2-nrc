@@ -226,19 +226,27 @@ __host__ void SetNRCCounters( NRCCounters* p ) { cudaMemcpyToSymbol(nrcCounters,
 #include "pathtracer.h"
 #include "finalize_shared.h"
 
+#define NRC_TRAININPUTBUF(ray_segment_idx, idx) trainInputBuf[(NRC_INPUTDIM * (ray_segment_idx)) + (idx)]
+
 #if __CUDA_ARCH__ > 700 // Volta deliberately excluded
 __global__  __launch_bounds__(128 /* max block size */, 2 /* min blocks per sm TURING */)
 #else
 __global__  __launch_bounds__(256 /* max block size */, 2 /* min blocks per sm, PASCAL, VOLTA */)
 #endif
-__global__ void PrepareNRCTrainData_Kernel( float4* trainBuf, float4* trainInputBuf, float4* debugView ) {
-	int jobIndex = threadIdx.x + blockIdx.x * blockDim.x;
+__global__ void PrepareNRCTrainData_Kernel( const float4* trainBuf, float* trainInputBuf, float4* debugView ) {
+	uint jobIndex = threadIdx.x + blockIdx.x * blockDim.x;
 	if (jobIndex >= NRC_NUMTRAINRAYS) {
 		return;
 	}
 
+	NRC_DUMP("[trainData] jobIndex=%d", jobIndex);
+
 	float3 luminances[NRC_MAXTRAINPATHLENGTH];
 	bool luminanceTrained[NRC_MAXTRAINPATHLENGTH];
+	for (uint i = 0; i < NRC_MAXTRAINPATHLENGTH; i++) {
+		luminanceTrained[i] = false;
+	}
+
 	bool previousDataValid = false;
 	uint lastValidPathLength = 0;
 
@@ -251,6 +259,8 @@ __global__ void PrepareNRCTrainData_Kernel( float4* trainBuf, float4* trainInput
 		const float4 data5 = NRC_TRAINBUF(jobIndex, pathLength, 5);
 
 		const uint flags = __float_as_uint(data4.w);
+
+		NRC_DUMP("[trainData] jobIndex=%d, pathLen=%d, flags=%x, %d, %d", jobIndex, pathLength, flags, (flags & S_NRC_DATA_VALID), (flags & S_NRC_TRAINING_DISCARD));
 
 		if ((flags & S_NRC_DATA_VALID) > 0 && !previousDataValid) {
 			// This is the last bounce, reason:
@@ -269,6 +279,8 @@ __global__ void PrepareNRCTrainData_Kernel( float4* trainBuf, float4* trainInput
 			luminanceTrained[pathLength - 1] = ((flags & S_NRC_TRAINING_DISCARD) == 0);
 			previousDataValid = true;
 			lastValidPathLength = pathLength;
+
+			NRC_DUMP("[trainData] jobIndex=%d, pathLen=%d, last bounce", jobIndex, pathLength);
 		}
 		else if ((flags & S_NRC_DATA_VALID) > 0 && previousDataValid) {
 			// NOTE: only direct lighting from one of the lights are possible here
@@ -278,6 +290,8 @@ __global__ void PrepareNRCTrainData_Kernel( float4* trainBuf, float4* trainInput
 			float3 indirectLuminance = segmentThroughput * luminances[pathLength];
 			luminances[pathLength - 1] = directLuminance + indirectLuminance;
 			luminanceTrained[pathLength - 1] = ((flags & S_NRC_TRAINING_DISCARD) == 0);
+
+			NRC_DUMP("[trainData] jobIndex=%d, pathLen=%d, not last bounce", jobIndex, pathLength);
 		}
 		else if ((flags & S_NRC_DATA_VALID) == 0 && previousDataValid) {
 			// illegal data encountered, TODO: error recovery
@@ -295,6 +309,7 @@ __global__ void PrepareNRCTrainData_Kernel( float4* trainBuf, float4* trainInput
 
 	for (uint pathLength = lastValidPathLength; pathLength >= 1; pathLength--) {
 		if (!luminanceTrained[pathLength - 1]) {
+			NRC_DUMP("[trainData] jobIndex=%d, pathLen=%d discarded", jobIndex, pathLength);
 			continue;
 		}
 
@@ -315,11 +330,78 @@ __global__ void PrepareNRCTrainData_Kernel( float4* trainBuf, float4* trainInput
 		const float3 specularRefl = make_float3(data3.x, data3.y, data3.z);
 		const float3 luminance = luminances[pathLength - 1];
 
-		// TODO: add encode
+		const size_t position_encoded_offset = 0;
+		const size_t direction_encoded_offset = 3 * 12;
+		const size_t normal_encoded_offset = direction_encoded_offset + 2 * 4;
+		const size_t roughness_encoded_offset = normal_encoded_offset + 2 * 4;
+		const size_t diffuse_encoded_offset = roughness_encoded_offset + 4;
+		const size_t specular_encoded_offset = diffuse_encoded_offset + 3;
+
+		// Position - Frequency - 3->3x12
+		for (uint i = 0; i < 6; i++) {
+			NRC_TRAININPUTBUF(raySegmentIdx, position_encoded_offset + i) = sinf(powf(2, i) * PI * rayIsect.x);
+			NRC_TRAININPUTBUF(raySegmentIdx, position_encoded_offset + i + 6) = cosf(powf(2, i) * PI * rayIsect.x);
+		}
+		for (uint i = 0; i < 6; i++) {
+			NRC_TRAININPUTBUF(raySegmentIdx, position_encoded_offset + i + 12) = sinf(powf(2, i) * PI * rayIsect.y);
+			NRC_TRAININPUTBUF(raySegmentIdx, position_encoded_offset + i + 12 + 6) = cosf(powf(2, i) * PI * rayIsect.y);
+		}
+		for (uint i = 0; i < 6; i++) {
+			NRC_TRAININPUTBUF(raySegmentIdx, position_encoded_offset + i + 24) = sinf(powf(2, i) * PI * rayIsect.z);
+			NRC_TRAININPUTBUF(raySegmentIdx, position_encoded_offset + i + 24 + 6) = cosf(powf(2, i) * PI * rayIsect.z);
+		}
+
+		// Direction - OneBlob - 2->2x4 (k=4, same for below)
+		// dir_sph: { 0 to 1, 0 to 1 }
+		const float2 dir_sph = make_float2(rayDir.x / (2 * PI) + 0.5f, rayDir.y / PI + 0.5f);
+		for (uint i = 0; i < 4; i++) {      // OneBlob size
+			for (uint j = 0; j < 2; j++) {  // Input demension
+				const float sigma = 1.f / 4.f;
+				float x = (i / 4.f) - (j == 0 ? dir_sph.x : dir_sph.y);
+				NRC_TRAININPUTBUF(raySegmentIdx, direction_encoded_offset + j * 4 + i) =
+					1.f / (sqrtf(2.f * PI) * sigma) *
+					expf((-x * x / (2.f * sigma * sigma)));
+			}
+		}
+		// Normal - OneBlob
+		const float2 normal_sph = make_float2(normalDir.x / (2 * PI) + 0.5f, normalDir.y / PI + 0.5f);
+		for (uint i = 0; i < 4; i++) {      // OneBlob size
+			for (uint j = 0; j < 2; j++) {  // Input demension
+				const float sigma = 1.f / 4.f;
+				float x = (i / 4.f) - (j == 0 ? normal_sph.x : normal_sph.y);
+				NRC_TRAININPUTBUF(raySegmentIdx, normal_encoded_offset + j * 4 + i) =
+					1.f / (sqrtf(2.f * PI) * sigma) *
+					expf((-x * x / (2.f * sigma * sigma)));
+			}
+		}
+
+		// Roughness - OneBlob
+		for (uint i = 0; i < 4; i++) {  // OneBlob size
+			const float sigma = 1.f / 4.f;
+			float x = (i / 4.f) - (1 - exp(-roughness));
+			NRC_TRAININPUTBUF(raySegmentIdx, roughness_encoded_offset + i) =
+				1.f / (sqrtf(2.f * PI) * sigma) *
+				expf((-x * x / (2.f * sigma * sigma)));
+		}
+
+		// Diffuse
+		NRC_TRAININPUTBUF(raySegmentIdx, diffuse_encoded_offset + 0) = diffuseRefl.x;
+		NRC_TRAININPUTBUF(raySegmentIdx, diffuse_encoded_offset + 1) = diffuseRefl.y;
+		NRC_TRAININPUTBUF(raySegmentIdx, diffuse_encoded_offset + 2) = diffuseRefl.z;
+
+		// Specular (TODO)
+		NRC_TRAININPUTBUF(raySegmentIdx, specular_encoded_offset + 0) = specularRefl.x;
+		NRC_TRAININPUTBUF(raySegmentIdx, specular_encoded_offset + 1) = specularRefl.y;
+		NRC_TRAININPUTBUF(raySegmentIdx, specular_encoded_offset + 2) = specularRefl.z;
+
+
 	}
 }
 
-__host__ void PrepareNRCTrainData() {}
+__host__ void PrepareNRCTrainData(const float4* trainBuf, float* trainInputBuf, float4* debugView) {
+	const uint numBlocks = NEXTMULTIPLEOF(NRC_NUMTRAINRAYS, 128) / 128;
+	PrepareNRCTrainData_Kernel << <numBlocks, 128 >> > (trainBuf, trainInputBuf, debugView);
+}
 
 } // namespace lh2core
 

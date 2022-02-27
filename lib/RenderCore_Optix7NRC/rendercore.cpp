@@ -32,6 +32,7 @@ void shadeTrain(const int pathCount, float4* trainBuf, const uint stride,
 	float4* trainPathStates, float4* hits, float4* connections,
 	const uint R0, const uint shift, const uint* blueNoise, const int pass, const int pathLength, const int scrwidth, const int scrheight, const float spreadAngle, float4* debugView);
 void finalizeRender( const float4* accumulator, const int w, const int h, const int spp );
+void PrepareNRCTrainData(const float4* trainBuf, float* trainInputBuf, float4* debugView);
 
 } // namespace lh2core
 
@@ -251,6 +252,18 @@ void RenderCore::Init()
 	SetCounters( counterBuffer->DevPtr() );
 	nrcCounterBuffer = new CoreBuffer<NRCCounters>(1, ON_DEVICE | ON_HOST);
 	SetNRCCounters(nrcCounterBuffer->DevPtr());
+
+	// prepare training input buffer
+	trainInputBuffer = new CoreBuffer<float>(NRC_NUMTRAINRAYS * NRC_INPUTDIM, ON_DEVICE | ON_HOST);
+
+	// prepare tinycudann context
+	/*std::shared_ptr<tcnn::Loss<precision_t>> loss{ create_loss<precision_t>(loss_opts) };
+	std::shared_ptr<Optimizer<precision_t>> optimizer{ create_optimizer<precision_t>(optimizer_opts) };
+	std::shared_ptr<NetworkWithInputEncoding<precision_t>> network = std::make_shared<NetworkWithInputEncoding<precision_t>>(n_input_dims, n_output_dims, encoding_opts, network_opts);
+
+	auto trainer = std::make_shared<Trainer<float, precision_t, precision_t>>(network, optimizer, loss);*/
+
+
 	// prepare the bluenoise data
 	const uchar* data8 = (const uchar*)sob256_64; // tables are 8 bit per entry
 	uint* data32 = new uint[65536 * 5]; // we want a full uint per entry
@@ -922,9 +935,6 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 	bool traceTrainRays = true;
 	bool visualizeTrainRays = true;
 	if (traceTrainRays) {
-		nrcCounterBuffer->HostPtr()[0].nrcActualTrainRays = 0;
-		nrcCounterBuffer->CopyToDevice();
-
 		uint trainPathCount = NRC_NUMTRAINRAYS;
 		trainBuffer->Clear( ON_DEVICE );
 		for (int trainPathLength = 1; trainPathLength <= NRC_MAXTRAINPATHLENGTH; trainPathLength++) {
@@ -978,7 +988,17 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 		cudaEventRecord(nrcTrainShadowEnd);
 
 		// Aggregate rays
+		nrcCounterBuffer->HostPtr()[0].nrcActualTrainRays = 0;
+		nrcCounterBuffer->CopyToDevice();
+		cudaStreamSynchronize(0);
+		PrepareNRCTrainData(trainBuffer->DevPtr(), trainInputBuffer->DevPtr(), nullptr);
 
+		cudaStreamSynchronize(0);
+		nrcCounterBuffer->CopyToHost();
+		cudaStreamSynchronize(0);
+		printf("Aggregated %d rays.\n", nrcCounterBuffer->HostPtr()[0].nrcActualTrainRays);
+
+		// Train NN
 
 		printf("NRC training rays tracing phase done. \n");
 	}
