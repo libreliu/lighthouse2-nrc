@@ -35,11 +35,6 @@
 #define S_NRC_TRAINING_DISCARD 64     // (NRC) this training sample should be discarded
 #define ENOUGH_BOUNCES	S_BOUNCED // or S_BOUNCEDTWICE
 
-//#define NRC_DUMP(X, ...) 
-#define NRC_DUMP(X, ...)  printf(X "\n", ##__VA_ARGS__)
-#define NRC_DUMP_WARN(X, ...)  printf(X "\n", ##__VA_ARGS__)
-
-
 // readability defines; data layout is optimized for 128-bit accesses
 #define PRIMIDX __float_as_int( hitData.z )
 #define INSTANCEIDX __float_as_int( hitData.y )

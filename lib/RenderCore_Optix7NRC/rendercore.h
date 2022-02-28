@@ -115,6 +115,7 @@ private:
 	CoreBuffer<float4>* connectionBuffer = 0;		// shadow rays
 	CoreBuffer<float4>* trainBuffer = 0;            // training data sketchpad
 	CoreBuffer<float>* trainInputBuffer = 0;       // training data encoded
+	CoreBuffer<float>* trainTargetBuffer = 0;      // training targets
 	CoreBuffer<OptixInstance>* instanceArray = 0;	// instance descriptors for Optix
 	CoreBuffer<Params>* optixParams;				// parameters to be used in optix code
 	CoreTexDesc* texDescs = 0;						// array of texture descriptors

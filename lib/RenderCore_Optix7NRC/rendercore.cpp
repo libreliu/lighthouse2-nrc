@@ -32,7 +32,7 @@ void shadeTrain(const int pathCount, float4* trainBuf, const uint stride,
 	float4* trainPathStates, float4* hits, float4* connections,
 	const uint R0, const uint shift, const uint* blueNoise, const int pass, const int pathLength, const int scrwidth, const int scrheight, const float spreadAngle, float4* debugView);
 void finalizeRender( const float4* accumulator, const int w, const int h, const int spp );
-void PrepareNRCTrainData(const float4* trainBuf, float* trainInputBuf, float4* debugView);
+void PrepareNRCTrainData(const float4* trainBuf, float* trainInputBuf, float* trainOutputBuf, float4* debugView);
 
 } // namespace lh2core
 
@@ -253,8 +253,9 @@ void RenderCore::Init()
 	nrcCounterBuffer = new CoreBuffer<NRCCounters>(1, ON_DEVICE | ON_HOST);
 	SetNRCCounters(nrcCounterBuffer->DevPtr());
 
-	// prepare training input buffer
+	// prepare training buffer
 	trainInputBuffer = new CoreBuffer<float>(NRC_NUMTRAINRAYS * NRC_INPUTDIM, ON_DEVICE | ON_HOST);
+	trainTargetBuffer = new CoreBuffer<float>(NRC_NUMTRAINRAYS * 3, ON_DEVICE | ON_HOST);
 
 	// prepare tinycudann context
 	/*std::shared_ptr<tcnn::Loss<precision_t>> loss{ create_loss<precision_t>(loss_opts) };
@@ -991,7 +992,7 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 		nrcCounterBuffer->HostPtr()[0].nrcActualTrainRays = 0;
 		nrcCounterBuffer->CopyToDevice();
 		cudaStreamSynchronize(0);
-		PrepareNRCTrainData(trainBuffer->DevPtr(), trainInputBuffer->DevPtr(), nullptr);
+		PrepareNRCTrainData(trainBuffer->DevPtr(), trainInputBuffer->DevPtr(), trainTargetBuffer->DevPtr(), nullptr);
 
 		cudaStreamSynchronize(0);
 		nrcCounterBuffer->CopyToHost();

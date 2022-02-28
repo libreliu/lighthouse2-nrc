@@ -233,7 +233,7 @@ __global__  __launch_bounds__(128 /* max block size */, 2 /* min blocks per sm T
 #else
 __global__  __launch_bounds__(256 /* max block size */, 2 /* min blocks per sm, PASCAL, VOLTA */)
 #endif
-__global__ void PrepareNRCTrainData_Kernel( const float4* trainBuf, float* trainInputBuf, float4* debugView ) {
+__global__ void PrepareNRCTrainData_Kernel( const float4* trainBuf, float* trainInputBuf, float* trainTargetBuf, float4* debugView ) {
 	uint jobIndex = threadIdx.x + blockIdx.x * blockDim.x;
 	if (jobIndex >= NRC_NUMTRAINRAYS) {
 		return;
@@ -394,13 +394,16 @@ __global__ void PrepareNRCTrainData_Kernel( const float4* trainBuf, float* train
 		NRC_TRAININPUTBUF(raySegmentIdx, specular_encoded_offset + 1) = specularRefl.y;
 		NRC_TRAININPUTBUF(raySegmentIdx, specular_encoded_offset + 2) = specularRefl.z;
 
-
+		// TODO: add luminance into target buffer
+		trainTargetBuf[raySegmentIdx * 3 + 0] = luminance.x;
+		trainTargetBuf[raySegmentIdx * 3 + 1] = luminance.y;
+		trainTargetBuf[raySegmentIdx * 3 + 2] = luminance.z;
 	}
 }
 
-__host__ void PrepareNRCTrainData(const float4* trainBuf, float* trainInputBuf, float4* debugView) {
+__host__ void PrepareNRCTrainData(const float4* trainBuf, float* trainInputBuf, float* trainTargetBuf, float4* debugView) {
 	const uint numBlocks = NEXTMULTIPLEOF(NRC_NUMTRAINRAYS, 128) / 128;
-	PrepareNRCTrainData_Kernel << <numBlocks, 128 >> > (trainBuf, trainInputBuf, debugView);
+	PrepareNRCTrainData_Kernel << <numBlocks, 128 >> > (trainBuf, trainInputBuf, trainTargetBuf, debugView);
 }
 
 } // namespace lh2core
