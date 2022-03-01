@@ -32,9 +32,13 @@ void shadeTrain(const int pathCount, float4* trainBuf, const uint stride,
 	float4* trainPathStates, float4* hits, float4* connections,
 	const uint R0, const uint shift, const uint* blueNoise, const int pass, const int pathLength, const int scrwidth, const int scrheight, const float spreadAngle, float4* debugView);
 void finalizeRender( const float4* accumulator, const int w, const int h, const int spp );
-void PrepareNRCTrainData(const float4* trainBuf, float* trainInputBuf, float* trainOutputBuf, float4* debugView);
+void PrepareNRCTrainData(const float4* trainBuf, float* trainInputBuf, float* trainTargetBuf, float4* debugView);
 
 } // namespace lh2core
+
+void NRCNet_Init(cudaStream_t training_stream, cudaStream_t inference_stream);
+float NRCNet_Train(float* trainInputBuffer, float* trainTargetBuffer, size_t numTrainSamples);
+void NRCNet_Inference(float* inferenceInputBuffer, float* inferenceOutputBuffer, size_t numInferenceSamples);
 
 using namespace lh2core;
 
@@ -254,16 +258,12 @@ void RenderCore::Init()
 	SetNRCCounters(nrcCounterBuffer->DevPtr());
 
 	// prepare training buffer
-	trainInputBuffer = new CoreBuffer<float>(NRC_NUMTRAINRAYS * NRC_INPUTDIM, ON_DEVICE | ON_HOST);
-	trainTargetBuffer = new CoreBuffer<float>(NRC_NUMTRAINRAYS * 3, ON_DEVICE | ON_HOST);
+	trainInputBuffer = new CoreBuffer<float>(NRC_NUMTRAINRAYS * NRC_MAXTRAINPATHLENGTH * NRC_INPUTDIM, ON_DEVICE | ON_HOST);
+	trainTargetBuffer = new CoreBuffer<float>(NRC_NUMTRAINRAYS * NRC_MAXTRAINPATHLENGTH * 3, ON_DEVICE | ON_HOST);
+	trainBuffer = new CoreBuffer<float4>(NRC_NUMTRAINRAYS * NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE, ON_DEVICE);
 
 	// prepare tinycudann context
-	/*std::shared_ptr<tcnn::Loss<precision_t>> loss{ create_loss<precision_t>(loss_opts) };
-	std::shared_ptr<Optimizer<precision_t>> optimizer{ create_optimizer<precision_t>(optimizer_opts) };
-	std::shared_ptr<NetworkWithInputEncoding<precision_t>> network = std::make_shared<NetworkWithInputEncoding<precision_t>>(n_input_dims, n_output_dims, encoding_opts, network_opts);
-
-	auto trainer = std::make_shared<Trainer<float, precision_t, precision_t>>(network, optimizer, loss);*/
-
+	NRCNet_Init(0, 0);
 
 	// prepare the bluenoise data
 	const uchar* data8 = (const uchar*)sob256_64; // tables are 8 bit per entry
@@ -361,7 +361,6 @@ void RenderCore::SetTarget( GLTexture* target, const uint spp )
 		//  float bsdfpdf;			// (used during shade) postponed previous-pass bsdfpdf
 		// };
 
-		trainBuffer = new CoreBuffer<float4>( NRC_NUMTRAINRAYS * NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE , ON_DEVICE );
 		cudaMemset( hitBuffer->DevPtr(), 255, maxPixels * scrspp * sizeof( float4 ) ); // set all hits to -1 for first frame.
 		pathStateBuffer = new CoreBuffer<float4>( std::max(maxPixels * scrspp, NRC_NUMTRAINRAYS * NRC_MAXTRAINPATHLENGTH) * 3, ON_DEVICE );
 		params.connectData = connectionBuffer->DevPtr();
@@ -967,7 +966,7 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 			counterBuffer->CopyToHost();
 			counters = counterBuffer->HostPtr()[0];
 			trainPathCount = counters.extensionRays;
-			printf("Train path count: %d (pathLength=%d)\n", trainPathCount, trainPathLength);
+			NRC_DUMP_INFO("Train path count: %d (pathLength=%d)", trainPathCount, trainPathLength);
 			if (trainPathCount == 0) break;
 
 			// trace shadow rays now if the next loop iteration could overflow the buffer.
@@ -997,11 +996,18 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 		cudaStreamSynchronize(0);
 		nrcCounterBuffer->CopyToHost();
 		cudaStreamSynchronize(0);
-		printf("Aggregated %d rays.\n", nrcCounterBuffer->HostPtr()[0].nrcActualTrainRays);
+
+		uint numActualTrainRays = nrcCounterBuffer->HostPtr()[0].nrcActualTrainRays;
+		NRC_DUMP_INFO("Aggregated %d rays.", numActualTrainRays);
 
 		// Train NN
-
-		printf("NRC training rays tracing phase done. \n");
+		if (numActualTrainRays > 0) {
+			NRCNet_Train(trainInputBuffer->DevPtr(), trainTargetBuffer->DevPtr(), numActualTrainRays);
+		} else {
+			NRC_DUMP_INFO("Skipped since no rays present.");
+		}
+		
+		NRC_DUMP_INFO("NRC training rays tracing phase done. ");
 	}
 
 

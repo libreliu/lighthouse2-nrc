@@ -673,7 +673,7 @@ __host__ void shadeTrain( const int pathCount, float4* trainBuf, const uint stri
 {
 	const dim3 gridDim( NEXTMULTIPLEOF( pathCount, 128 ) / 128, 1 );
 
-	//NRC_DUMP("[DEBUG] trainBuf=%p, trainPathStates=%p, connections=%p, blueNoise=%p", trainBuf, trainPathStates, connections, blueNoise);
+	NRC_DUMP("[DEBUG] trainBuf=%p, trainPathStates=%p, hits=%p, connections=%p, blueNoise=%p, debugView=%p", trainBuf, trainPathStates, hits, connections, blueNoise, debugView);
 	shadeTrainKernel << <gridDim.x, 128 >> > (trainBuf, stride, trainPathStates, hits, connections, R0, shift, blueNoise,
 		pass, pathLength, scrwidth, scrheight, spreadAngle, pathCount, debugView);
 }

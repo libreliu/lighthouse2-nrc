@@ -10,3 +10,4 @@
 //#define NRC_DUMP(X, ...) 
 #define NRC_DUMP(X, ...)  printf(X "\n", ##__VA_ARGS__)
 #define NRC_DUMP_WARN(X, ...)  printf(X "\n", ##__VA_ARGS__)
+#define NRC_DUMP_INFO(X, ...)  printf(X "\n", ##__VA_ARGS__)
