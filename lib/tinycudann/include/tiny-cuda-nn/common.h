@@ -47,8 +47,8 @@
 
 TCNN_NAMESPACE_BEGIN
 
-// using network_precision_t = float;
-using network_precision_t = __half;
+using network_precision_t = float;
+// using network_precision_t = __half;
 
 // #define TCNN_VERBOSE_MEMORY_ALLOCS
 

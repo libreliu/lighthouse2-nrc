@@ -78,8 +78,8 @@ float NRCNet_Train(
 	float* trainTargetBuffer,
 	size_t numTrainSamples
 ) {
-	tcnn::GPUMatrix<float, tcnn::RM> trainInput(trainInputBuffer, NRC_INPUTDIM, numTrainSamples);
-	tcnn::GPUMatrix<float, tcnn::RM> trainTarget(trainTargetBuffer, 3, numTrainSamples);
+	tcnn::GPUMatrix<float, tcnn::CM> trainInput(trainInputBuffer, NRC_INPUTDIM, numTrainSamples);
+	tcnn::GPUMatrix<float, tcnn::CM> trainTarget(trainTargetBuffer, 3, numTrainSamples);
 
 	float loss_value;
 	nrcNetCtx.trainer->training_step(nrcNetCtx.training_stream, trainInput, trainTarget, &loss_value, nullptr);
@@ -92,9 +92,9 @@ void NRCNet_Inference(
 	float* inferenceOutputBuffer,
 	size_t numInferenceSamples
 ) {
-	// Do we need to pad?
-	tcnn::GPUMatrix<float, tcnn::RM> inferenceInput(inferenceInputBuffer, NRC_INPUTDIM, numInferenceSamples);
-	tcnn::GPUMatrix<float, tcnn::RM> inferenceTarget(inferenceOutputBuffer, 3, numInferenceSamples);
+	// That's strange, but only CM works
+	tcnn::GPUMatrix<float, tcnn::CM> inferenceInput(inferenceInputBuffer, NRC_INPUTDIM, numInferenceSamples);
+	tcnn::GPUMatrix<float, tcnn::CM> inferenceTarget(inferenceOutputBuffer, 3, numInferenceSamples);
 
 	nrcNetCtx.network->inference(
 		nrcNetCtx.inference_stream,

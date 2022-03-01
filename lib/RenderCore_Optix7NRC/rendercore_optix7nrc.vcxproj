@@ -74,6 +74,7 @@
       <TargetMachinePlatform>64</TargetMachinePlatform>
       <FastMath>true</FastMath>
       <AdditionalOptions>--extended-lambda --expt-relaxed-constexpr %(AdditionalOptions)</AdditionalOptions>
+      <CodeGeneration>compute_75,sm_75</CodeGeneration>
     </CudaCompile>
     <Lib>
       <AdditionalDependencies>cudart_static.lib;nvrtc.lib</AdditionalDependencies>
@@ -110,6 +111,7 @@
       <TargetMachinePlatform>64</TargetMachinePlatform>
       <FastMath>true</FastMath>
       <AdditionalOptions>--extended-lambda --expt-relaxed-constexpr %(AdditionalOptions)</AdditionalOptions>
+      <CodeGeneration>compute_75,sm_75</CodeGeneration>
     </CudaCompile>
     <Lib>
       <AdditionalDependencies>cudart_static.lib;nvrtc.lib</AdditionalDependencies>
@@ -164,6 +166,17 @@
     <ClInclude Include="rendercore.h" />
   </ItemGroup>
   <ItemGroup>
+    <CudaCompile Include="..\tinycudann\src\common.cu" />
+    <CudaCompile Include="..\tinycudann\src\common_device.cu" />
+    <CudaCompile Include="..\tinycudann\src\cutlass_mlp.cu" />
+    <CudaCompile Include="..\tinycudann\src\cutlass_resnet.cu" />
+    <CudaCompile Include="..\tinycudann\src\encoding.cu" />
+    <CudaCompile Include="..\tinycudann\src\fully_fused_mlp.cu" />
+    <CudaCompile Include="..\tinycudann\src\loss.cu" />
+    <CudaCompile Include="..\tinycudann\src\network.cu" />
+    <CudaCompile Include="..\tinycudann\src\object.cu" />
+    <CudaCompile Include="..\tinycudann\src\optimizer.cu" />
+    <CudaCompile Include="..\tinycudann\src\reduce_sum.cu" />
     <CudaCompile Include="kernels\.cuda.cu">
       <CodeGeneration Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">compute_60,sm_60;compute_75,sm_75</CodeGeneration>
       <CodeGeneration Condition="'$(Configuration)|$(Platform)'=='Release|x64'">compute_60,sm_60;compute_75,sm_75</CodeGeneration>
