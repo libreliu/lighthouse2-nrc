@@ -55,7 +55,7 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>COREDLL_EXPORTS;WIN32;WIN64;_CRT_SECURE_NO_WARNINGS;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>../tinycudann/dependencies;../tinycudann/include;../freeimage/inc;../zlib;../glfw/include;../glad/include;../CUDA;../CUDA/shared_kernel_code;../sharedBSDFs;../half2.2.0;../tinyobjloader;../OptiX7/include;../platform;.;../RenderSystem;%(AdditionalIncludeDirectories);$(CudaToolkitIncludeDir);../taskflow</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>../nrcNet/;../tinycudann/dependencies;../tinycudann/include;../freeimage/inc;../zlib;../glfw/include;../glad/include;../CUDA;../CUDA/shared_kernel_code;../sharedBSDFs;../half2.2.0;../tinyobjloader;../OptiX7/include;../platform;.;../RenderSystem;%(AdditionalIncludeDirectories);$(CudaToolkitIncludeDir);../taskflow</AdditionalIncludeDirectories>
       <EnableEnhancedInstructionSet>AdvancedVectorExtensions</EnableEnhancedInstructionSet>
       <FloatingPointModel>Fast</FloatingPointModel>
       <PrecompiledHeader>Use</PrecompiledHeader>
@@ -89,7 +89,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <PreprocessorDefinitions>COREDLL_EXPORTS;WIN32;WIN64;_CRT_SECURE_NO_WARNINGS;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>../tinycudann/dependencies;../tinycudann/include;../freeimage/inc;../zlib;../glfw/include;../glad/include;../CUDA;../CUDA/shared_kernel_code;../sharedBSDFs;../half2.2.0;../tinyobjloader;../OptiX7/include;../platform;.;../RenderSystem;%(AdditionalIncludeDirectories);$(CudaToolkitIncludeDir);../taskflow</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>../nrcNet/;../tinycudann/dependencies;../tinycudann/include;../freeimage/inc;../zlib;../glfw/include;../glad/include;../CUDA;../CUDA/shared_kernel_code;../sharedBSDFs;../half2.2.0;../tinyobjloader;../OptiX7/include;../platform;.;../RenderSystem;%(AdditionalIncludeDirectories);$(CudaToolkitIncludeDir);../taskflow</AdditionalIncludeDirectories>
       <EnableEnhancedInstructionSet>AdvancedVectorExtensions</EnableEnhancedInstructionSet>
       <FloatingPointModel>Fast</FloatingPointModel>
       <DebugInformationFormat>None</DebugInformationFormat>
@@ -166,6 +166,7 @@
     <ClInclude Include="rendercore.h" />
   </ItemGroup>
   <ItemGroup>
+    <CudaCompile Include="..\nrcNet\nrcNet.cu" />
     <CudaCompile Include="..\tinycudann\src\common.cu" />
     <CudaCompile Include="..\tinycudann\src\common_device.cu" />
     <CudaCompile Include="..\tinycudann\src\cutlass_mlp.cu" />
@@ -188,7 +189,6 @@
       <InterleaveSourceInPTX Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</InterleaveSourceInPTX>
       <GenerateLineInfo Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</GenerateLineInfo>
     </CudaCompile>
-    <CudaCompile Include="nrcNet.cu" />
     <CudaCompile Include="optix\.optix.cu">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>

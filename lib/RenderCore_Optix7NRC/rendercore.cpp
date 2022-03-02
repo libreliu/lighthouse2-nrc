@@ -1002,7 +1002,12 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 
 		// Train NN
 		if (numActualTrainRays > 0) {
-			NRCNet_Train(trainInputBuffer->DevPtr(), trainTargetBuffer->DevPtr(), numActualTrainRays);
+			// walkaround: copy to host
+			trainInputBuffer->CopyToHost();
+			trainTargetBuffer->CopyToHost();
+
+			// NRCNet_Train(trainInputBuffer->DevPtr(), trainTargetBuffer->DevPtr(), numActualTrainRays);
+			NRCNet_Train(trainInputBuffer->HostPtr(), trainTargetBuffer->HostPtr(), numActualTrainRays);
 		} else {
 			NRC_DUMP_INFO("Skipped since no rays present.");
 		}
@@ -1117,10 +1122,10 @@ void RenderCore::FinalizeRender()
 	coreStats.frameOverhead = max( 0.0f, frameTimer.elapsed() - coreStats.renderTime );
 	frameTimer.reset();
 	coreStats.traceTimeX = coreStats.shadeTime = 0;
-	for (int i = 2; i < MAXPATHLENGTH; i++)
-		coreStats.traceTimeX += CUDATools::Elapsed( renderThread->coreState.traceStart[i], renderThread->coreState.traceEnd[i] );
-	for (int i = 0; i < MAXPATHLENGTH; i++)
-		coreStats.shadeTime += CUDATools::Elapsed( renderThread->coreState.shadeStart[i], renderThread->coreState.shadeEnd[i] );
+	// for (int i = 2; i < MAXPATHLENGTH; i++)
+	// 	coreStats.traceTimeX += CUDATools::Elapsed( renderThread->coreState.traceStart[i], renderThread->coreState.traceEnd[i] );
+	// for (int i = 0; i < MAXPATHLENGTH; i++)
+	// 	coreStats.shadeTime += CUDATools::Elapsed( renderThread->coreState.shadeStart[i], renderThread->coreState.shadeEnd[i] );
 }
 
 //  +-----------------------------------------------------------------------------+

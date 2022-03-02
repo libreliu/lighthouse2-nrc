@@ -73,7 +73,6 @@
     <CudaCompile Include="kernels\.cuda.cu">
       <Filter>CUDA</Filter>
     </CudaCompile>
-    <CudaCompile Include="nrcNet.cu" />
     <CudaCompile Include="..\tinycudann\src\common.cu">
       <Filter>tiny-cuda-nn</Filter>
     </CudaCompile>
@@ -107,5 +106,6 @@
     <CudaCompile Include="..\tinycudann\src\reduce_sum.cu">
       <Filter>tiny-cuda-nn</Filter>
     </CudaCompile>
+    <CudaCompile Include="..\nrcNet\nrcNet.cu" />
   </ItemGroup>
 </Project>

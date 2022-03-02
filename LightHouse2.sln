@@ -137,6 +137,10 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "RenderCore_Optix7Adaptive",
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "RenderCore_Optix7NRC", "lib\RenderCore_Optix7NRC\rendercore_optix7nrc.vcxproj", "{B637E64A-D281-4A0C-BDF6-42C0A81B2CB8}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "nrc debug", "nrc debug", "{4FE4E32A-3913-42B0-9EE0-BBF64EF7DF92}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "NRCNetDebug", "nrc-debug\NRCNetDebug\NRCNetDebug.vcxproj", "{9A9C97F1-4B33-40C3-A7F2-AA0D54C3C947}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -261,6 +265,12 @@ Global
 		{B637E64A-D281-4A0C-BDF6-42C0A81B2CB8}.Release|x64.ActiveCfg = Release|x64
 		{B637E64A-D281-4A0C-BDF6-42C0A81B2CB8}.Release|x64.Build.0 = Release|x64
 		{B637E64A-D281-4A0C-BDF6-42C0A81B2CB8}.Release|x86.ActiveCfg = Release|x64
+		{9A9C97F1-4B33-40C3-A7F2-AA0D54C3C947}.Debug|x64.ActiveCfg = Debug|x64
+		{9A9C97F1-4B33-40C3-A7F2-AA0D54C3C947}.Debug|x64.Build.0 = Debug|x64
+		{9A9C97F1-4B33-40C3-A7F2-AA0D54C3C947}.Debug|x86.ActiveCfg = Debug|x64
+		{9A9C97F1-4B33-40C3-A7F2-AA0D54C3C947}.Release|x64.ActiveCfg = Release|x64
+		{9A9C97F1-4B33-40C3-A7F2-AA0D54C3C947}.Release|x64.Build.0 = Release|x64
+		{9A9C97F1-4B33-40C3-A7F2-AA0D54C3C947}.Release|x86.ActiveCfg = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -283,6 +293,7 @@ Global
 		{F8317F7E-E606-4EA6-BAC7-ED3A5F33F12C} = {24024FCF-C61F-4202-B224-31E446620333}
 		{517586AB-4B37-4949-BD7C-70BA26202BAD} = {24024FCF-C61F-4202-B224-31E446620333}
 		{B637E64A-D281-4A0C-BDF6-42C0A81B2CB8} = {24024FCF-C61F-4202-B224-31E446620333}
+		{9A9C97F1-4B33-40C3-A7F2-AA0D54C3C947} = {4FE4E32A-3913-42B0-9EE0-BBF64EF7DF92}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {7799D7AC-6A26-44C6-B345-CA1364BA60F1}
