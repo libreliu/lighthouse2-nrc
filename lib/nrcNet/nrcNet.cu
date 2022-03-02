@@ -73,6 +73,13 @@ void NRCNet_Init(cudaStream_t training_stream, cudaStream_t inference_stream) {
 	nrcNetCtx.training_stream = training_stream;
 }
 
+void NRCNet_Destroy() {
+	nrcNetCtx.loss.reset();
+	nrcNetCtx.optimizer.reset();
+	nrcNetCtx.network.reset();
+	nrcNetCtx.trainer.reset();
+}
+
 __global__ void gpu_copy_float(uint32_t n_elements, float* __restrict__ src, float* __restrict__ dst) {
 	uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
 	if (i >= n_elements) return;
@@ -94,6 +101,7 @@ float NRCNet_TrainCPU(
 	tcnn::GPUMatrix<float, tcnn::CM> trainInput(NRC_INPUTDIM, numTrainSamples);
 	tcnn::GPUMatrix<float, tcnn::CM> trainTarget(3, numTrainSamples);
 
+	// TODO: check stream it resides in
 	tcnn::linear_kernel(gpu_copy_float, 0, 0, numTrainSamples * NRC_INPUTDIM, trainInputAux.data(), trainInput.data());
 	tcnn::linear_kernel(gpu_copy_float, 0, 0, numTrainSamples * 3, trainTargetAux.data(), trainTarget.data());
 

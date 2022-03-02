@@ -38,6 +38,7 @@ void PrepareNRCTrainData(const float4* trainBuf, float* trainInputBuf, float* tr
 
 void NRCNet_Init(cudaStream_t training_stream, cudaStream_t inference_stream);
 float NRCNet_Train(float* trainInputBuffer, float* trainTargetBuffer, size_t numTrainSamples);
+float NRCNet_TrainCPU(float* trainInputBuffer, float* trainTargetBuffer, size_t numTrainSamples);
 void NRCNet_Inference(float* inferenceInputBuffer, float* inferenceOutputBuffer, size_t numInferenceSamples);
 
 using namespace lh2core;
@@ -1007,7 +1008,7 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 			trainTargetBuffer->CopyToHost();
 
 			// NRCNet_Train(trainInputBuffer->DevPtr(), trainTargetBuffer->DevPtr(), numActualTrainRays);
-			NRCNet_Train(trainInputBuffer->HostPtr(), trainTargetBuffer->HostPtr(), numActualTrainRays);
+			NRCNet_TrainCPU(trainInputBuffer->HostPtr(), trainTargetBuffer->HostPtr(), numActualTrainRays);
 		} else {
 			NRC_DUMP_INFO("Skipped since no rays present.");
 		}
