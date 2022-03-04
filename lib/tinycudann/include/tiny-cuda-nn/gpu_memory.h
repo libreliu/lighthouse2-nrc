@@ -98,10 +98,6 @@ public:
 			return;
 		}
 
-#ifdef TCNN_VERBOSE_MEMORY_ALLOCS
-		std::cout << "GPUMemory: Allocating " << bytes_to_string(n_bytes) << "." << std::endl;
-#endif
-
 		uint8_t *rawptr = nullptr;
 		CUDA_CHECK_THROW(cudaMalloc(&rawptr, n_bytes+DEBUG_GUARD_SIZE*2));
 #if DEBUG_GUARD_SIZE > 0
@@ -111,13 +107,21 @@ public:
 		if (rawptr) rawptr+=DEBUG_GUARD_SIZE;
 		m_data=(T*)(rawptr);
 		total_n_bytes_allocated() += n_bytes;
+
+#ifdef TCNN_VERBOSE_MEMORY_ALLOCS
+		std::string gpuMemSize = bytes_to_string(n_bytes);
+		printf("GPUMemory: Allocating %p (%s in size)\n", m_data, gpuMemSize.c_str());
+		//std::cout << "GPUMemory: Allocating " << bytes_to_string(n_bytes) << "." << std::endl;
+#endif
 	}
 
 	void free_memory() {
 		if (!m_data) {
 			return;
 		}
-
+#ifdef TCNN_VERBOSE_MEMORY_ALLOCS
+		printf("GPUMemory: Deallocating %p\n", m_data);
+#endif
 		uint8_t *rawptr = (uint8_t*)m_data;
 		if (rawptr) rawptr-=DEBUG_GUARD_SIZE;
 		CUDA_CHECK_THROW(cudaFree(rawptr));

@@ -263,8 +263,11 @@ void RenderCore::Init()
 	trainTargetBuffer = new CoreBuffer<float>(NRC_NUMTRAINRAYS * NRC_MAXTRAINPATHLENGTH * 3, ON_DEVICE | ON_HOST);
 	trainBuffer = new CoreBuffer<float4>(NRC_NUMTRAINRAYS * NRC_MAXTRAINPATHLENGTH * NRC_TRAINCOMPONENTSIZE, ON_DEVICE);
 
+	CHK_CUDA(cudaStreamCreate(&inferenceStream));
+	CHK_CUDA(cudaStreamCreate(&trainingStream));
+
 	// prepare tinycudann context
-	NRCNet_Init(0, 0);
+	NRCNet_Init(trainingStream, inferenceStream);
 
 	// prepare the bluenoise data
 	const uchar* data8 = (const uchar*)sob256_64; // tables are 8 bit per entry
@@ -1008,11 +1011,13 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 			trainTargetBuffer->CopyToHost();
 
 			// NRCNet_Train(trainInputBuffer->DevPtr(), trainTargetBuffer->DevPtr(), numActualTrainRays);
-			NRCNet_TrainCPU(trainInputBuffer->HostPtr(), trainTargetBuffer->HostPtr(), numActualTrainRays);
+			float loss = NRCNet_TrainCPU(trainInputBuffer->HostPtr(), trainTargetBuffer->HostPtr(), numActualTrainRays);
+			NRC_DUMP_INFO("Train loss = %f", loss);
 		} else {
 			NRC_DUMP_INFO("Skipped since no rays present.");
 		}
 		
+		cudaStreamSynchronize(trainingStream);
 		NRC_DUMP_INFO("NRC training rays tracing phase done. ");
 	}
 

@@ -144,6 +144,10 @@ private:
 	cudaEvent_t nrcTrainTraceStart[NRC_MAXTRAINPATHLENGTH], nrcTrainTraceEnd[NRC_MAXTRAINPATHLENGTH];
 	cudaEvent_t nrcTrainShadeStart[NRC_MAXTRAINPATHLENGTH], nrcTrainShadeEnd[NRC_MAXTRAINPATHLENGTH];
 	cudaEvent_t nrcTrainShadowStart, nrcTrainShadowEnd;
+
+	// Stream for nrcNet
+	cudaStream_t inferenceStream;
+	cudaStream_t trainingStream;
 protected:
 	// events
 	HANDLE startEvent, doneEvent;
