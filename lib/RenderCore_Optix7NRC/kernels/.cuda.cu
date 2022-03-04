@@ -217,6 +217,83 @@ __host__ void SetCounters( Counters* p ) { cudaMemcpyToSymbol( counters, &p, siz
 static __device__ NRCCounters* nrcCounters;
 __host__ void SetNRCCounters( NRCCounters* p ) { cudaMemcpyToSymbol(nrcCounters, &p, sizeof(void*)); }
 
+
+inline __device__ void EncodeNRCInput(
+	float* bufStart,
+	const float3 rayIsect,
+	const float roughness,
+	const float2 rayDir,
+	const float2 normalDir,
+	const float3 diffuseRefl,
+	const float3 specularRefl	
+) {
+	const size_t position_encoded_offset = 0;
+	const size_t direction_encoded_offset = 3 * 12;
+	const size_t normal_encoded_offset = direction_encoded_offset + 2 * 4;
+	const size_t roughness_encoded_offset = normal_encoded_offset + 2 * 4;
+	const size_t diffuse_encoded_offset = roughness_encoded_offset + 4;
+	const size_t specular_encoded_offset = diffuse_encoded_offset + 3;
+
+	// Position - Frequency - 3->3x12
+	for (uint i = 0; i < 6; i++) {
+		bufStart[position_encoded_offset + i] = sinf(powf(2, i) * PI * rayIsect.x);
+		bufStart[position_encoded_offset + i + 6] = cosf(powf(2, i) * PI * rayIsect.x);
+	}
+	for (uint i = 0; i < 6; i++) {
+		bufStart[position_encoded_offset + i + 12] = sinf(powf(2, i) * PI * rayIsect.y);
+		bufStart[position_encoded_offset + i + 12 + 6] = cosf(powf(2, i) * PI * rayIsect.y);
+	}
+	for (uint i = 0; i < 6; i++) {
+		bufStart[position_encoded_offset + i + 24] = sinf(powf(2, i) * PI * rayIsect.z);
+		bufStart[position_encoded_offset + i + 24 + 6] = cosf(powf(2, i) * PI * rayIsect.z);
+	}
+
+	// Direction - OneBlob - 2->2x4 (k=4, same for below)
+	// dir_sph: { 0 to 1, 0 to 1 }
+	const float2 dir_sph = make_float2(rayDir.x / (2 * PI) + 0.5f, rayDir.y / PI + 0.5f);
+	for (uint i = 0; i < 4; i++) {      // OneBlob size
+		for (uint j = 0; j < 2; j++) {  // Input demension
+			const float sigma = 1.f / 4.f;
+			float x = (i / 4.f) - (j == 0 ? dir_sph.x : dir_sph.y);
+			bufStart[direction_encoded_offset + j * 4 + i] =
+				1.f / (sqrtf(2.f * PI) * sigma) *
+				expf((-x * x / (2.f * sigma * sigma)));
+		}
+	}
+
+	// Normal - OneBlob
+	const float2 normal_sph = make_float2(normalDir.x / (2 * PI) + 0.5f, normalDir.y / PI + 0.5f);
+	for (uint i = 0; i < 4; i++) {      // OneBlob size
+		for (uint j = 0; j < 2; j++) {  // Input demension
+			const float sigma = 1.f / 4.f;
+			float x = (i / 4.f) - (j == 0 ? normal_sph.x : normal_sph.y);
+			bufStart[normal_encoded_offset + j * 4 + i] =
+				1.f / (sqrtf(2.f * PI) * sigma) *
+				expf((-x * x / (2.f * sigma * sigma)));
+		}
+	}
+
+	// Roughness - OneBlob
+	for (uint i = 0; i < 4; i++) {  // OneBlob size
+		const float sigma = 1.f / 4.f;
+		float x = (i / 4.f) - (1 - exp(-roughness));
+		bufStart[roughness_encoded_offset + i] =
+			1.f / (sqrtf(2.f * PI) * sigma) *
+			expf((-x * x / (2.f * sigma * sigma)));
+	}
+	// Diffuse
+	bufStart[diffuse_encoded_offset + 0] = diffuseRefl.x;
+	bufStart[diffuse_encoded_offset + 1] = diffuseRefl.y;
+	bufStart[diffuse_encoded_offset + 2] = diffuseRefl.z;
+
+	// Specular
+	bufStart[specular_encoded_offset + 0] = specularRefl.x;
+	bufStart[specular_encoded_offset + 1] = specularRefl.y;
+	bufStart[specular_encoded_offset + 2] = specularRefl.z;
+}
+
+#define NRC_TRAININPUTBUF(ray_segment_idx, idx) trainInputBuf[(NRC_INPUTDIM * (ray_segment_idx)) + (idx)]
+
 // functional blocks
 #include "tools_shared.h"
 #include "sampling_shared.h"
@@ -226,7 +303,6 @@ __host__ void SetNRCCounters( NRCCounters* p ) { cudaMemcpyToSymbol(nrcCounters,
 #include "pathtracer.h"
 #include "finalize_shared.h"
 
-#define NRC_TRAININPUTBUF(ray_segment_idx, idx) trainInputBuf[(NRC_INPUTDIM * (ray_segment_idx)) + (idx)]
 
 #if __CUDA_ARCH__ > 700 // Volta deliberately excluded
 __global__  __launch_bounds__(128 /* max block size */, 2 /* min blocks per sm TURING */)
@@ -330,69 +406,10 @@ __global__ void PrepareNRCTrainData_Kernel( const float4* trainBuf, float* train
 		const float3 specularRefl = make_float3(data3.x, data3.y, data3.z);
 		const float3 luminance = luminances[pathLength - 1];
 
-		const size_t position_encoded_offset = 0;
-		const size_t direction_encoded_offset = 3 * 12;
-		const size_t normal_encoded_offset = direction_encoded_offset + 2 * 4;
-		const size_t roughness_encoded_offset = normal_encoded_offset + 2 * 4;
-		const size_t diffuse_encoded_offset = roughness_encoded_offset + 4;
-		const size_t specular_encoded_offset = diffuse_encoded_offset + 3;
-
-		// Position - Frequency - 3->3x12
-		for (uint i = 0; i < 6; i++) {
-			NRC_TRAININPUTBUF(raySegmentIdx, position_encoded_offset + i) = sinf(powf(2, i) * PI * rayIsect.x);
-			NRC_TRAININPUTBUF(raySegmentIdx, position_encoded_offset + i + 6) = cosf(powf(2, i) * PI * rayIsect.x);
-		}
-		for (uint i = 0; i < 6; i++) {
-			NRC_TRAININPUTBUF(raySegmentIdx, position_encoded_offset + i + 12) = sinf(powf(2, i) * PI * rayIsect.y);
-			NRC_TRAININPUTBUF(raySegmentIdx, position_encoded_offset + i + 12 + 6) = cosf(powf(2, i) * PI * rayIsect.y);
-		}
-		for (uint i = 0; i < 6; i++) {
-			NRC_TRAININPUTBUF(raySegmentIdx, position_encoded_offset + i + 24) = sinf(powf(2, i) * PI * rayIsect.z);
-			NRC_TRAININPUTBUF(raySegmentIdx, position_encoded_offset + i + 24 + 6) = cosf(powf(2, i) * PI * rayIsect.z);
-		}
-
-		// Direction - OneBlob - 2->2x4 (k=4, same for below)
-		// dir_sph: { 0 to 1, 0 to 1 }
-		const float2 dir_sph = make_float2(rayDir.x / (2 * PI) + 0.5f, rayDir.y / PI + 0.5f);
-		for (uint i = 0; i < 4; i++) {      // OneBlob size
-			for (uint j = 0; j < 2; j++) {  // Input demension
-				const float sigma = 1.f / 4.f;
-				float x = (i / 4.f) - (j == 0 ? dir_sph.x : dir_sph.y);
-				NRC_TRAININPUTBUF(raySegmentIdx, direction_encoded_offset + j * 4 + i) =
-					1.f / (sqrtf(2.f * PI) * sigma) *
-					expf((-x * x / (2.f * sigma * sigma)));
-			}
-		}
-		// Normal - OneBlob
-		const float2 normal_sph = make_float2(normalDir.x / (2 * PI) + 0.5f, normalDir.y / PI + 0.5f);
-		for (uint i = 0; i < 4; i++) {      // OneBlob size
-			for (uint j = 0; j < 2; j++) {  // Input demension
-				const float sigma = 1.f / 4.f;
-				float x = (i / 4.f) - (j == 0 ? normal_sph.x : normal_sph.y);
-				NRC_TRAININPUTBUF(raySegmentIdx, normal_encoded_offset + j * 4 + i) =
-					1.f / (sqrtf(2.f * PI) * sigma) *
-					expf((-x * x / (2.f * sigma * sigma)));
-			}
-		}
-
-		// Roughness - OneBlob
-		for (uint i = 0; i < 4; i++) {  // OneBlob size
-			const float sigma = 1.f / 4.f;
-			float x = (i / 4.f) - (1 - exp(-roughness));
-			NRC_TRAININPUTBUF(raySegmentIdx, roughness_encoded_offset + i) =
-				1.f / (sqrtf(2.f * PI) * sigma) *
-				expf((-x * x / (2.f * sigma * sigma)));
-		}
-
-		// Diffuse
-		NRC_TRAININPUTBUF(raySegmentIdx, diffuse_encoded_offset + 0) = diffuseRefl.x;
-		NRC_TRAININPUTBUF(raySegmentIdx, diffuse_encoded_offset + 1) = diffuseRefl.y;
-		NRC_TRAININPUTBUF(raySegmentIdx, diffuse_encoded_offset + 2) = diffuseRefl.z;
-
-		// Specular (TODO)
-		NRC_TRAININPUTBUF(raySegmentIdx, specular_encoded_offset + 0) = specularRefl.x;
-		NRC_TRAININPUTBUF(raySegmentIdx, specular_encoded_offset + 1) = specularRefl.y;
-		NRC_TRAININPUTBUF(raySegmentIdx, specular_encoded_offset + 2) = specularRefl.z;
+		EncodeNRCInput(
+			&trainInputBuf[raySegmentIdx * NRC_INPUTDIM],
+			rayIsect, roughness, rayDir, normalDir, diffuseRefl, specularRefl
+		);
 
 		// TODO: add luminance into target buffer
 		trainTargetBuf[raySegmentIdx * 3 + 0] = luminance.x;
@@ -404,6 +421,38 @@ __global__ void PrepareNRCTrainData_Kernel( const float4* trainBuf, float* train
 __host__ void PrepareNRCTrainData(const float4* trainBuf, float* trainInputBuf, float* trainTargetBuf, float4* debugView) {
 	const uint numBlocks = NEXTMULTIPLEOF(NRC_NUMTRAINRAYS, 128) / 128;
 	PrepareNRCTrainData_Kernel << <numBlocks, 128 >> > (trainBuf, trainInputBuf, trainTargetBuf, debugView);
+}
+
+#if __CUDA_ARCH__ > 700 // Volta deliberately excluded
+__global__  __launch_bounds__(128 /* max block size */, 2 /* min blocks per sm TURING */)
+#else
+__global__  __launch_bounds__(256 /* max block size */, 2 /* min blocks per sm, PASCAL, VOLTA */)
+#endif
+__global__ void NRCNetResultAdd_Kernel(float4* accumulator, const float* inferenceOutputBuffer, const float* inferenceAuxiliaryBuffer, uint numSamples) {
+	uint jobIndex = threadIdx.x + blockDim.x * blockIdx.x;
+	if (jobIndex >= numSamples) {
+		return;
+	}
+
+	const float4 throughput = make_float4(
+		inferenceAuxiliaryBuffer[jobIndex * 4 + 0],
+		inferenceAuxiliaryBuffer[jobIndex * 4 + 1],
+		inferenceAuxiliaryBuffer[jobIndex * 4 + 2],
+		0.0f
+	);
+
+	const uint pixelIdx = __float_as_int(inferenceAuxiliaryBuffer[jobIndex * 4 + 3]);
+	accumulator[pixelIdx] += throughput * make_float4(
+		inferenceOutputBuffer[jobIndex * 3 + 0],
+		inferenceOutputBuffer[jobIndex * 3 + 1],
+		inferenceOutputBuffer[jobIndex * 3 + 2],
+		0.0f
+	);
+}
+
+__host__ void NRCNetResultAdd(float4* accumulator, const float* inferenceOutputBuffer, const float* inferenceAuxiliaryBuffer, uint numSamples) {
+	const uint numBlocks = NEXTMULTIPLEOF(numSamples, 128) / 128;
+	NRCNetResultAdd_Kernel << <numBlocks, 128 >> > (accumulator, inferenceOutputBuffer, inferenceAuxiliaryBuffer, numSamples);
 }
 
 } // namespace lh2core

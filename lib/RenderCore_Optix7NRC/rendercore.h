@@ -113,6 +113,9 @@ private:
 	CoreBuffer<float4>* hitBuffer = 0;				// intersection results
 	CoreBuffer<float4>* pathStateBuffer = 0;		// path state buffer
 	CoreBuffer<float4>* connectionBuffer = 0;		// shadow rays
+	CoreBuffer<float>* inferenceInputBuffer = 0;	// (NRC) inference input buffer
+	CoreBuffer<float>* inferenceOutputBuffer = 0;  // (NRC) inference output buffer
+	CoreBuffer<float4>* inferenceAuxiliaryBuffer = 0; // (NRC) Records the pixelIdx and throughput to be accumulated into
 	CoreBuffer<float4>* trainBuffer = 0;            // training data sketchpad
 	CoreBuffer<float>* trainInputBuffer = 0;       // training data encoded
 	CoreBuffer<float>* trainTargetBuffer = 0;      // training targets

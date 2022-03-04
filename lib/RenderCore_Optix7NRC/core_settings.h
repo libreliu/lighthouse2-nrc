@@ -114,6 +114,7 @@ struct Counters
 
 struct NRCCounters {
 	uint nrcActualTrainRays;
+	uint nrcNumInferenceRays;
 };
 
 // path tracer parameters

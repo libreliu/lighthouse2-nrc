@@ -30,7 +30,9 @@ void shade( const int pathCount, float4* accumulator, const uint stride,
 	const int probePixelIdx, const int pathLength, const int w, const int h, const float spreadAngle );
 void shadeTrain(const int pathCount, float4* trainBuf, const uint stride,
 	float4* trainPathStates, float4* hits, float4* connections,
-	const uint R0, const uint shift, const uint* blueNoise, const int pass, const int pathLength, const int scrwidth, const int scrheight, const float spreadAngle, float4* debugView);
+	const uint R0, const uint shift, const uint* blueNoise, const int pass, const int pathLength,
+	const int scrwidth, const int scrheight, const float spreadAngle, float4* debugView,
+	float* inferenceInputBuffer, float* inferenceAuxiliaryBuffer);
 void finalizeRender( const float4* accumulator, const int w, const int h, const int spp );
 void PrepareNRCTrainData(const float4* trainBuf, float* trainInputBuf, float* trainTargetBuf, float4* debugView);
 
@@ -346,24 +348,15 @@ void RenderCore::SetTarget( GLTexture* target, const uint spp )
 		delete accumulator;
 		delete hitBuffer;
 		delete pathStateBuffer;
+		delete inferenceInputBuffer;
+		delete inferenceOutputBuffer;
+		delete inferenceAuxiliaryBuffer;
 		connectionBuffer = new CoreBuffer<float4>( std::max(maxPixels * scrspp, NRC_NUMTRAINRAYS * NRC_MAXTRAINPATHLENGTH) * 3 * 2, ON_DEVICE );
 		accumulator = new CoreBuffer<float4>( maxPixels, ON_DEVICE );
 		hitBuffer = new CoreBuffer<float4>( maxPixels * scrspp, ON_DEVICE );
-		// struct TrainPathStateComponent __attribute__((packed))
-		// {
-		// 	float3 O;				// ray origin
-		//  float roughness;        // surface roughness
-		// 	float2 D; 				// scattered dir (Spherical coord.)
-		//  float2 N;               // surface normal
-		//  float3 diffuseRefl;     // diffuse reflectance
-		//  float dummy1;
-		//  float3 specularRefl;    // specular reflectance
-		//  float dummy2;
-		// 	float3 L;				// luminance output
-		// 	float flags;            // (used during shade) previous roughness / specular
-		//  float3 throughput;      // (used during shade) throughput of this ray segment
-		//  float bsdfpdf;			// (used during shade) postponed previous-pass bsdfpdf
-		// };
+		inferenceInputBuffer = new CoreBuffer<float>( maxPixels * scrspp * NRC_INPUTDIM, ON_DEVICE );
+		inferenceOutputBuffer = new CoreBuffer<float>( maxPixels * scrspp * 3, ON_DEVICE );
+		inferenceAuxiliaryBuffer = new CoreBuffer<float4>( maxPixels * scrspp, ON_DEVICE );
 
 		cudaMemset( hitBuffer->DevPtr(), 255, maxPixels * scrspp * sizeof( float4 ) ); // set all hits to -1 for first frame.
 		pathStateBuffer = new CoreBuffer<float4>( std::max(maxPixels * scrspp, NRC_NUMTRAINRAYS * NRC_MAXTRAINPATHLENGTH) * 3, ON_DEVICE );
@@ -1025,6 +1018,9 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 	// trace screen rays
 	bool traceScreenRays = false;
 	if (traceScreenRays) {
+		nrcCounterBuffer->HostPtr()[0].nrcNumInferenceRays = 0;
+		nrcCounterBuffer->CopyToDevice();
+
 		uint pathCount = scrwidth * scrheight * scrspp;
 		coreStats.deepRayCount = 0;
 		coreStats.primaryRayCount = pathCount;

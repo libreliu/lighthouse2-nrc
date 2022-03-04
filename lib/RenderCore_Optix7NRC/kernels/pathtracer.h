@@ -73,7 +73,7 @@ void shadeKernel( float4* accumulator, const uint stride,
 	float4* pathStates, float4* hits, float4* connections,
 	const uint R0, const uint shift, const uint* blueNoise, const int pass,
 	const int probePixelIdx, const int pathLength, const int w, const int h, const float spreadAngle,
-	const uint pathCount )
+	const uint pathCount, float* inferenceInputBuffer, float* inferenceAuxiliaryBuffer )
 {
 	// respect boundaries
 	int jobIndex = threadIdx.x + blockIdx.x * blockDim.x;
@@ -230,20 +230,72 @@ void shadeKernel( float4* accumulator, const uint stride,
 	}
 
 	// cap at two diffuse bounces, or a maxium path length
-	if (FLAGS & ENOUGH_BOUNCES || pathLength == MAXPATHLENGTH) return;
+	if (FLAGS & ENOUGH_BOUNCES || pathLength == MAXPATHLENGTH) {
+		const uint inferenceRayIdx = atomicAdd(&nrcCounters->nrcNumInferenceRays, 1);
+		EncodeNRCInput(
+			&inferenceInputBuffer[NRC_INPUTDIM * inferenceRayIdx],
+			I, ROUGHNESS, toSphericalCoord(D), toSphericalCoord(N), shadingData.color, shadingData.color
+		);
+
+		// Write auxiliary buffer
+		// [throughput.x throughput.y throughput.z pixelIdx]
+		// the throughput should consider previous pdf (already done in apply postponed bsdf pdf)
+		inferenceAuxiliaryBuffer[inferenceRayIdx * 4 + 0] = throughput.x;
+		inferenceAuxiliaryBuffer[inferenceRayIdx * 4 + 1] = throughput.y;
+		inferenceAuxiliaryBuffer[inferenceRayIdx * 4 + 2] = throughput.z;
+		inferenceAuxiliaryBuffer[inferenceRayIdx * 4 + 3] = __uint_as_float( pixelIdx );
+
+		return;
+	}
 
 	// evaluate bsdf to obtain direction for next path segment
 	float3 R;
 	float newBsdfPdf;
 	bool specular = false;
 	const float3 bsdf = SampleBSDF( shadingData, fN, N, T, D * -1.0f, HIT_T, r4.z, r4.w, RandomFloat( seed ), R, newBsdfPdf, specular );
-	if (newBsdfPdf < EPSILON || isnan( newBsdfPdf )) return;
+	if (newBsdfPdf < EPSILON || isnan( newBsdfPdf )) {
+		const uint inferenceRayIdx = atomicAdd(&nrcCounters->nrcNumInferenceRays, 1);
+		EncodeNRCInput(
+			&inferenceInputBuffer[NRC_INPUTDIM * inferenceRayIdx],
+			I, ROUGHNESS, toSphericalCoord(D), toSphericalCoord(N), shadingData.color, shadingData.color
+		);
+
+		// Write auxiliary buffer
+		// [throughput.x throughput.y throughput.z pixelIdx]
+		// the throughput should consider previous pdf (already done in apply postponed bsdf pdf)
+		inferenceAuxiliaryBuffer[inferenceRayIdx * 4 + 0] = throughput.x;
+		inferenceAuxiliaryBuffer[inferenceRayIdx * 4 + 1] = throughput.y;
+		inferenceAuxiliaryBuffer[inferenceRayIdx * 4 + 2] = throughput.z;
+		inferenceAuxiliaryBuffer[inferenceRayIdx * 4 + 3] = __uint_as_float( pixelIdx );
+		return;
+	}
 	if (specular) FLAGS |= S_SPECULAR;
 
 	// russian roulette
 	const float p = ((FLAGS & S_SPECULAR) || ((FLAGS & S_BOUNCED) == 0)) ? 1 : SurvivalProbability( bsdf );
-	if (p < RandomFloat( seed )) return; else throughput *= 1 / p;
+	
+	// (NRC) no need to calibrate on rr since we assume NRC result is unbiased estimation of true luminance
+	if (p < RandomFloat( seed )) {
+		const uint inferenceRayIdx = atomicAdd(&nrcCounters->nrcNumInferenceRays, 1);
+		EncodeNRCInput(
+			&inferenceInputBuffer[NRC_INPUTDIM * inferenceRayIdx],
+			I, ROUGHNESS, toSphericalCoord(D), toSphericalCoord(N), shadingData.color, shadingData.color
+		);
 
+		// Write auxiliary buffer
+		// [throughput.x throughput.y throughput.z pixelIdx]
+		// the throughput should consider previous pdf (already done in apply postponed bsdf pdf)
+		inferenceAuxiliaryBuffer[inferenceRayIdx * 4 + 0] = throughput.x;
+		inferenceAuxiliaryBuffer[inferenceRayIdx * 4 + 1] = throughput.y;
+		inferenceAuxiliaryBuffer[inferenceRayIdx * 4 + 2] = throughput.z;
+		inferenceAuxiliaryBuffer[inferenceRayIdx * 4 + 3] = __uint_as_float( pixelIdx );
+
+		return;
+	} else {
+		// no-op
+		//throughput *= 1 / p;
+	} 
+	
 	// write extension ray, with compaction. Note: nvcc will aggregate automatically, 
 	// https://devblogs.nvidia.com/cuda-pro-tip-optimized-filtering-warp-aggregated-atomics 
 	const uint extensionRayIdx = atomicAdd( &counters->extensionRays, 1 );
@@ -665,7 +717,7 @@ void shadeTrainKernel( float4* trainBuf, const uint stride,
 
 //  +-----------------------------------------------------------------------------+
 //  |  shadeTrain                                                                 |
-//  |  Host-side access point for the shadeKernel code.                     LH2'19|
+//  |  Host-side access point for the shadeTrainKernel code.                     LH2'19|
 //  +-----------------------------------------------------------------------------+
 __host__ void shadeTrain( const int pathCount, float4* trainBuf, const uint stride,
 	float4* trainPathStates, float4* hits, float4* connections,
@@ -686,11 +738,11 @@ __host__ void shadeTrain( const int pathCount, float4* trainBuf, const uint stri
 __host__ void shade( const int pathCount, float4* accumulator, const uint stride,
 	float4* pathStates, float4* hits, float4* connections,
 	const uint R0, const uint shift, const uint* blueNoise, const int pass,
-	const int probePixelIdx, const int pathLength, const int scrwidth, const int scrheight, const float spreadAngle )
+	const int probePixelIdx, const int pathLength, const int scrwidth, const int scrheight, const float spreadAngle, float* inferenceInputBuffer, float* inferenceAuxiliaryBuffer )
 {
 	const dim3 gridDim( NEXTMULTIPLEOF( pathCount, 128 ) / 128, 1 );
 	shadeKernel << <gridDim.x, 128 >> > (accumulator, stride, pathStates, hits, connections, R0, shift, blueNoise,
-		pass, probePixelIdx, pathLength, scrwidth, scrheight, spreadAngle, pathCount);
+		pass, probePixelIdx, pathLength, scrwidth, scrheight, spreadAngle, pathCount, inferenceInputBuffer, inferenceAuxiliaryBuffer);
 }
 
 // EOF
