@@ -121,6 +121,7 @@ public:
 		}
 #ifdef TCNN_VERBOSE_MEMORY_ALLOCS
 		printf("GPUMemory: Deallocating %p\n", m_data);
+		fflush(stdout);
 #endif
 		uint8_t *rawptr = (uint8_t*)m_data;
 		if (rawptr) rawptr-=DEBUG_GUARD_SIZE;

@@ -27,12 +27,10 @@ void InitCountersSubsequent();
 void shade( const int pathCount, float4* accumulator, const uint stride,
 	float4* pathStates, float4* hits, float4* connections,
 	const uint R0, const uint shift, const uint* blueNoise, const int pass,
-	const int probePixelIdx, const int pathLength, const int w, const int h, const float spreadAngle );
+	const int probePixelIdx, const int pathLength, const int w, const int h, const float spreadAngle, float* inferenceInputBuffer, float* inferenceAuxiliaryBuffer);
 void shadeTrain(const int pathCount, float4* trainBuf, const uint stride,
 	float4* trainPathStates, float4* hits, float4* connections,
-	const uint R0, const uint shift, const uint* blueNoise, const int pass, const int pathLength,
-	const int scrwidth, const int scrheight, const float spreadAngle, float4* debugView,
-	float* inferenceInputBuffer, float* inferenceAuxiliaryBuffer);
+	const uint R0, const uint shift, const uint* blueNoise, const int pass, const int pathLength, const int scrwidth, const int scrheight, const float spreadAngle, float4* debugView);
 void finalizeRender( const float4* accumulator, const int w, const int h, const int spp );
 void PrepareNRCTrainData(const float4* trainBuf, float* trainInputBuf, float* trainTargetBuf, float4* debugView);
 
@@ -356,7 +354,7 @@ void RenderCore::SetTarget( GLTexture* target, const uint spp )
 		hitBuffer = new CoreBuffer<float4>( maxPixels * scrspp, ON_DEVICE );
 		inferenceInputBuffer = new CoreBuffer<float>( maxPixels * scrspp * NRC_INPUTDIM, ON_DEVICE );
 		inferenceOutputBuffer = new CoreBuffer<float>( maxPixels * scrspp * 3, ON_DEVICE );
-		inferenceAuxiliaryBuffer = new CoreBuffer<float4>( maxPixels * scrspp, ON_DEVICE );
+		inferenceAuxiliaryBuffer = new CoreBuffer<float>( maxPixels * scrspp * 4, ON_DEVICE );
 
 		cudaMemset( hitBuffer->DevPtr(), 255, maxPixels * scrspp * sizeof( float4 ) ); // set all hits to -1 for first frame.
 		pathStateBuffer = new CoreBuffer<float4>( std::max(maxPixels * scrspp, NRC_NUMTRAINRAYS * NRC_MAXTRAINPATHLENGTH) * 3, ON_DEVICE );
@@ -562,7 +560,7 @@ void RenderCore::SetMaterials( CoreMaterial* mat, const int materialCount )
 	if (materialBuffer == 0 || materialCount > materialBuffer->GetSize())
 	{
 		delete hostMaterialBuffer;
-	hostMaterialBuffer = new CUDAMaterial[materialCount];
+		hostMaterialBuffer = new CUDAMaterial[materialCount + 512];
 	}
 	for (int i = 0; i < materialCount; i++)
 	{
@@ -865,6 +863,8 @@ void RenderThread::run()
 //  +-----------------------------------------------------------------------------+
 void RenderCore::Render( const ViewPyramid& view, const Convergence converge, bool async )
 {
+	assert(!async);
+
 	if (!gpuHasSceneData) return;
 	// wait for OpenGL
 	glFinish();
@@ -1016,7 +1016,8 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 
 
 	// trace screen rays
-	bool traceScreenRays = false;
+	bool traceScreenRays = true;
+	bool enhanceWithNRC = true;
 	if (traceScreenRays) {
 		nrcCounterBuffer->HostPtr()[0].nrcNumInferenceRays = 0;
 		nrcCounterBuffer->CopyToDevice();
@@ -1047,7 +1048,8 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 			shade(pathCount, accumulator->DevPtr(), scrwidth * scrheight * scrspp,
 				pathStateBuffer->DevPtr(), hitBuffer->DevPtr(), noDirectLightsInScene ? 0 : connectionBuffer->DevPtr(),
 				RandomUInt(camRNGseed) + pathLength * 91771, shiftSeed, blueNoise->DevPtr(), samplesTaken,
-				probePos.x + scrwidth * probePos.y, pathLength, scrwidth, scrheight, view.spreadAngle);
+				probePos.x + scrwidth * probePos.y, pathLength, scrwidth, scrheight, view.spreadAngle,
+				inferenceInputBuffer->DevPtr(), inferenceAuxiliaryBuffer->DevPtr());
 			cudaEventRecord(shadeEnd[pathLength - 1]);
 			counterBuffer->CopyToHost();
 			counters = counterBuffer->HostPtr()[0];
@@ -1084,6 +1086,16 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 		const float3 P = RayTarget(probePos.x, probePos.y, 0.5f, 0.5f, make_int2(scrwidth, scrheight), view.distortion, view.p1, right, up);
 		const float3 D = normalize(P - view.pos);
 		coreStats.probedWorldPos = view.pos + counters.probedDist * D;
+
+		if (enhanceWithNRC) {
+			nrcCounterBuffer->CopyToHost();
+			uint nrcNumInferenceRays = nrcCounterBuffer->HostPtr()[0].nrcNumInferenceRays;
+			NRC_DUMP_INFO("Got %d rays to be inferenced", nrcNumInferenceRays);
+
+			// TODO: inference
+		}
+
+
 	}
 
 

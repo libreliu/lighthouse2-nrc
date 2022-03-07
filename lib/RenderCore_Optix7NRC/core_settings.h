@@ -24,7 +24,11 @@
 #define CLAMPFIREFLIES		// suppress fireflies by clamping
 #define MAXPATHLENGTH		5
 
+#ifdef OPTIX_CU
+#include "../../nrcNet/nrc_settings.h"
+#else
 #include "nrc_settings.h"
+#endif
 
 // #define CONSISTENTNORMALS	// consistent normal interpolation
 

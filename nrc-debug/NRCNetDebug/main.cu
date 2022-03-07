@@ -1,6 +1,15 @@
 #include <iostream>
 #include <cstdio>
 #include <cstdlib>
+#include <vector>
+
+#ifdef _WIN32
+#include <direct.h>
+#define getcwd _getcwd // stupid MSFT "deprecation" warning
+#elif
+#include <unistd.h>
+#endif
+
 #include "nrc_settings.h"
 
 void NRCNet_Init(cudaStream_t training_stream, cudaStream_t inference_stream);
@@ -15,7 +24,7 @@ void NRCNet_Destroy();
 #define ERR_EXIT(msg)         \
     do                        \
     {                         \
-        fprintf(stderr, msg); \
+        fprintf(stderr, msg "\n"); \
         exit(-1);             \
     } while (0)
 
@@ -109,8 +118,59 @@ void test_learn(void) {
 
 }
 
-int main(void)
+void test_inference(void) {
+    
+}
+
+void test_nrcNetDumpTrain(const std::string &pathPrefix, const std::string &trainInputFilename, const std::string &trainTargetFilename, int numSamples) {
+    std::string inputFilePath = pathPrefix + trainInputFilename;
+    std::string targetFilePath = pathPrefix + trainTargetFilename;
+    printf("trainInput=%s, trainTarget=%s\n", inputFilePath.c_str(), targetFilePath.c_str());
+
+    FILE* inputfp = fopen(inputFilePath.c_str(), "rb");
+    FILE* targetfp = fopen(targetFilePath.c_str(), "rb");
+    if (!inputfp || !targetfp) {
+        ERR_EXIT("Can't open file provided");
+    }
+
+    std::vector<float> inputBuf(numSamples * NRC_INPUTDIM, 0.0f);
+    std::vector<float> targetBuf(numSamples * 3, 0.0f);
+
+    int ret = fread(inputBuf.data(), sizeof(float), numSamples * NRC_INPUTDIM, inputfp);
+    if (ret != numSamples * NRC_INPUTDIM) {
+        printf("Error: trainInputBuf: Expected %d, got %d\n", numSamples * NRC_INPUTDIM, ret);
+        ERR_EXIT("Can't read file provided");
+    }
+
+    ret = fread(targetBuf.data(), sizeof(float), numSamples * 3, targetfp);
+    if (ret != numSamples * 3) {
+        printf("Error: trainTargetBuf: Expected %d, got %d\n", numSamples * 3, ret);
+        ERR_EXIT("Can't read file provided");
+    }
+
+    float loss = NRCNet_TrainCPU(inputBuf.data(), targetBuf.data(), numSamples);
+    printf("Loss = %f\n", loss);
+
+    fclose(inputfp);
+    fclose(targetfp);
+}
+
+void displayCwd() {
+    char buffer[4096];
+    char* answer = getcwd(buffer, sizeof(buffer));
+    std::string s_cwd;
+    if (answer)
+    {
+        s_cwd = answer;
+    }
+
+    std::cout << "displayCwd: " << s_cwd << std::endl;
+}
+
+int main(int argc, char *argv[])
 {
+    displayCwd();
+
     unsigned int device = FastestDevice();
     CHK_CUDA(cudaSetDevice(device));
 
@@ -121,9 +181,10 @@ int main(void)
     // NOTE: *can't* use stream 0, since tiny-cuda-nn uses cuda graph underneath
     NRCNet_Init(trainingStream, inferenceStream);
 
-    test_learn();
+    //test_learn();
+    test_nrcNetDumpTrain(NRC_DUMP_PATH, "matrix.1646637806_0.data", "matrix.1646637806_1.data", 9);
 
     NRCNet_Destroy();
 
-    CHK_CUDA(cudaDeviceReset());
+    //CHK_CUDA(cudaDeviceReset());
 }

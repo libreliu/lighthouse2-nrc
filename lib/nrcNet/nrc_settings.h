@@ -1,3 +1,5 @@
+#pragma once
+
 // NRC-specific settings
 #define NRC_MAXTRAINPATHLENGTH  5           // Should <= MAXPATHLENGTH
 //#define NRC_NUMTRAINRAYS        25
@@ -6,6 +8,9 @@
 #define NRC_INPUTDIM  64
 
 #define NRC_ENABLE_DEBUG_VIEW_PRIMARY
+
+#define NRC_ENABLE_DEBUG_DUMP_TO_DISK
+#define NRC_DUMP_PATH "../../lib/nrcNet/netDumps/"
 
 //#define NRC_DUMP(X, ...) 
 #define NRC_DUMP(X, ...)  printf(X "\n", ##__VA_ARGS__)
