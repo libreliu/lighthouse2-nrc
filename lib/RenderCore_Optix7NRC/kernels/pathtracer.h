@@ -597,6 +597,7 @@ void shadeTrainKernel( float4* trainBuf, const uint stride, const uint connectio
 
 #ifdef NRC_ENABLE_DEBUG_VIEW
 		// TODO: implement me
+		debugView[pixelIdx] = make_float4(0.0f, 0.0f, 1.0f, 0.0f);
 #endif
 		
 		return;
@@ -748,7 +749,7 @@ void shadeTrainKernel( float4* trainBuf, const uint stride, const uint connectio
 				const uint shadowRayIdx = atomicAdd( &counters->shadowRays, 1 ); // compaction; TODO: eliminate this?
 				connections[shadowRayIdx] = make_float4( SafeOrigin( I, L, N, geometryEpsilon ), /* pathLength */ __int_as_float(pathLength) ); // O4
 				connections[shadowRayIdx + connectionStride * 2] = make_float4( L, dist - 2 * geometryEpsilon ); // D4
-				connections[shadowRayIdx + connectionStride * 2 * 2] = make_float4( contribution, __int_as_float( pathIdx ) ); // E4
+				connections[shadowRayIdx + connectionStride * 2 * 2] = make_float4( contribution, __int_as_float( trainSlotIdx ) ); // E4
 			}
 		}
 	}

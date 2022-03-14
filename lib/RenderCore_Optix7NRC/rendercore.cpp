@@ -373,7 +373,7 @@ void RenderCore::SetTarget( GLTexture* target, const uint spp )
 		delete inferenceAuxiliaryBuffer;
 		connectionBuffer = new CoreBuffer<float4>( std::max(maxPixels * scrspp, NRC_NUMTRAINRAYS * NRC_MAXTRAINPATHLENGTH) * 3 * 2, ON_DEVICE );
 		accumulator = new CoreBuffer<float4>( maxPixels, ON_DEVICE );
-		hitBuffer = new CoreBuffer<float4>( maxPixels * scrspp, ON_DEVICE );
+		hitBuffer = new CoreBuffer<float4>( std::max(maxPixels * scrspp, NRC_NUMTRAINRAYS), ON_DEVICE );
 		inferenceInputBuffer = new CoreBuffer<float>( maxPixels * scrspp * NRC_INPUTDIM, ON_DEVICE );
 		inferenceOutputBuffer = new CoreBuffer<float>( maxPixels * scrspp * 3, ON_DEVICE );
 		inferenceAuxiliaryBuffer = new CoreBuffer<float>( maxPixels * scrspp * 4, ON_DEVICE );
@@ -933,6 +933,10 @@ void RenderCore::RenderTestPrimary(const ViewPyramid& view) {
 	// update acceleration structure
 	UpdateToplevel();
 	accumulator->Clear( ON_DEVICE );
+	std::vector<float> emptyData(scrwidth*scrheight*4*2, 0.5f);
+	accumulator->SetHostData((float4*)emptyData.data());
+	accumulator->CopyToDevice();
+
 	// render an image using OptiX
 	RandomUInt( shiftSeed );
 	coreStats.totalExtensionRays = coreStats.totalShadowRays = 0;
@@ -992,7 +996,7 @@ void RenderCore::RenderTestPrimary(const ViewPyramid& view) {
 	cudaDeviceSynchronize();
 	PrepareNRCTrainData(
 		trainBuffer->DevPtr(), trainInputBuffer->DevPtr(), trainTargetBuffer->DevPtr(),
-		accumulator->DevPtr(), (uint)nrcTrainMode, (uint)nrcVisualizeMode
+		accumulator->DevPtr(), (uint)nrcTrainMode, 1
 	);
 
 	cudaStreamSynchronize(0);
@@ -1028,7 +1032,12 @@ void RenderCore::RenderTestPrimary(const ViewPyramid& view) {
 	InitCountersForExtend(pathCount);
 	CHK_OPTIX(optixLaunch(pipeline, 0, d_params[0], sizeof(Params), &sbt, params.scrsize.x, params.scrsize.y * scrspp, 1));
 
-	shadePrimary(pathCount, accumulator->DevPtr(), scrwidth* scrheight* scrspp,
+	// shadePrimary(pathCount, accumulator->DevPtr(), scrwidth* scrheight* scrspp,
+	// 		pathStateBuffer->DevPtr(), hitBuffer->DevPtr(), noDirectLightsInScene ? 0 : connectionBuffer->DevPtr(),
+	// 		RandomUInt(camRNGseed) + 1 * 91771, shiftSeed, blueNoise->DevPtr(), samplesTaken,
+	// 		probePos.x + scrwidth * probePos.y, 1, scrwidth, scrheight, view.spreadAngle,
+	// 		inferenceInputBuffer->DevPtr(), inferenceAuxiliaryBuffer->DevPtr());
+	shadePrimary(pathCount, nullptr, scrwidth* scrheight* scrspp,
 			pathStateBuffer->DevPtr(), hitBuffer->DevPtr(), noDirectLightsInScene ? 0 : connectionBuffer->DevPtr(),
 			RandomUInt(camRNGseed) + 1 * 91771, shiftSeed, blueNoise->DevPtr(), samplesTaken,
 			probePos.x + scrwidth * probePos.y, 1, scrwidth, scrheight, view.spreadAngle,
@@ -1052,7 +1061,7 @@ void RenderCore::RenderTestPrimary(const ViewPyramid& view) {
 		NRCNet_Inference(inferenceInputBuffer->DevPtr(), inferenceOutputBuffer->DevPtr(), nrcPaddedRays);
 
 		cudaStreamSynchronize(inferenceStream);
-		NRCNetResultAdd(accumulator->DevPtr(), inferenceOutputBuffer->DevPtr(), inferenceAuxiliaryBuffer->DevPtr(), nrcPaddedRays);
+		//NRCNetResultAdd(accumulator->DevPtr(), inferenceOutputBuffer->DevPtr(), inferenceAuxiliaryBuffer->DevPtr(), nrcPaddedRays);
 	}
 
 	NRC_DUMP_INFO("--- End Primary Ray Training & Inference Test ---");

@@ -235,17 +235,29 @@ inline __device__ void EncodeNRCInput(
 	const size_t specular_encoded_offset = diffuse_encoded_offset + 3;
 
 	// Position - Frequency - 3->3x12
+	// for (uint i = 0; i < 6; i++) {
+	// 	bufStart[position_encoded_offset + i] = sinf(powf(2, i) * PI * rayIsect.x);
+	// 	bufStart[position_encoded_offset + i + 6] = cosf(powf(2, i) * PI * rayIsect.x);
+	// }
+	// for (uint i = 0; i < 6; i++) {
+	// 	bufStart[position_encoded_offset + i + 12] = sinf(powf(2, i) * PI * rayIsect.y);
+	// 	bufStart[position_encoded_offset + i + 12 + 6] = cosf(powf(2, i) * PI * rayIsect.y);
+	// }
+	// for (uint i = 0; i < 6; i++) {
+	// 	bufStart[position_encoded_offset + i + 24] = sinf(powf(2, i) * PI * rayIsect.z);
+	// 	bufStart[position_encoded_offset + i + 24 + 6] = cosf(powf(2, i) * PI * rayIsect.z);
+	// }
 	for (uint i = 0; i < 6; i++) {
-		bufStart[position_encoded_offset + i] = sinf(powf(2, i) * PI * rayIsect.x);
-		bufStart[position_encoded_offset + i + 6] = cosf(powf(2, i) * PI * rayIsect.x);
+		bufStart[position_encoded_offset + i] = rayIsect.x;
+		bufStart[position_encoded_offset + i + 6] = rayIsect.x;
 	}
 	for (uint i = 0; i < 6; i++) {
-		bufStart[position_encoded_offset + i + 12] = sinf(powf(2, i) * PI * rayIsect.y);
-		bufStart[position_encoded_offset + i + 12 + 6] = cosf(powf(2, i) * PI * rayIsect.y);
+		bufStart[position_encoded_offset + i + 12] = rayIsect.y;
+		bufStart[position_encoded_offset + i + 12 + 6] = rayIsect.y;
 	}
 	for (uint i = 0; i < 6; i++) {
-		bufStart[position_encoded_offset + i + 24] = sinf(powf(2, i) * PI * rayIsect.z);
-		bufStart[position_encoded_offset + i + 24 + 6] = cosf(powf(2, i) * PI * rayIsect.z);
+		bufStart[position_encoded_offset + i + 24] = rayIsect.z;
+		bufStart[position_encoded_offset + i + 24 + 6] = rayIsect.z;
 	}
 
 	// Direction - OneBlob - 2->2x4 (k=4, same for below)
@@ -360,7 +372,7 @@ __global__ void PrepareNRCTrainData_Kernel(
 			// if (trainingMode == 1 && pathLength == 1) {
 			// 	luminanceTrained[0] = true;
 			// } else {
-			// 	luminanceTrained[pathLength - 1] = ((flags & S_NRC_TRAINING_DISCARD) == 0);
+				luminanceTrained[pathLength - 1] = ((flags & S_NRC_TRAINING_DISCARD) == 0);
 			// }
 			previousDataValid = true;
 			lastValidPathLength = pathLength;
@@ -371,6 +383,7 @@ __global__ void PrepareNRCTrainData_Kernel(
 			if (visualizeMode == 1 && pathLength == 1) {
 				// VISUALIZE_TRAIN_TARGET_FIRSTBOUNCE_DIRECT
 				const uint pixelIdx = float_as_uint(data2.w);
+				// printf("Visualize %d: (%f,%f,%f)\n", pixelIdx, directLuminance.x, directLuminance.y, directLuminance.z);
 				debugView[pixelIdx] += make_float4(directLuminance, 0.0f);
 			}
 #endif
@@ -412,17 +425,28 @@ __global__ void PrepareNRCTrainData_Kernel(
 	}
 
 	for (uint pathLength = lastValidPathLength; pathLength >= 1; pathLength--) {
-		if (!luminanceTrained[pathLength - 1]) {
-			NRC_DUMP("[trainData] jobIndex=%d, pathLen=%d discarded", jobIndex, pathLength);
-			continue;
-		}
-
 		const float4 data0 = NRC_TRAINBUF(jobIndex, pathLength, 0);
 		const float4 data1 = NRC_TRAINBUF(jobIndex, pathLength, 1);
 		const float4 data2 = NRC_TRAINBUF(jobIndex, pathLength, 2);
 		const float4 data3 = NRC_TRAINBUF(jobIndex, pathLength, 3);
 		const float4 data4 = NRC_TRAINBUF(jobIndex, pathLength, 4);
 		const float4 data5 = NRC_TRAINBUF(jobIndex, pathLength, 5);
+
+		if (!luminanceTrained[pathLength - 1]) {
+			NRC_DUMP_WARN("[trainData] jobIndex=%d, pathLen=%d discarded", jobIndex, pathLength);
+			// mark as red
+			const uint pixelIdx = __float_as_int(data2.w);
+			const uint flags = __float_as_uint(data4.w);
+			
+			// if ((flags & S_NRC_TRAINING_DISCARD) == 0) {
+			// 	debugView[pixelIdx] = make_float4(0.0f, 1.0f, 0.0f, 0.0f);
+			// } else {
+			// 	debugView[pixelIdx] = make_float4(1.0f, 0.0f, 0.0f, 0.0f);
+			// }
+
+
+			continue;
+		}
 
 		const uint raySegmentIdx = atomicAdd( &nrcCounters->nrcActualTrainRays, 1);
 
@@ -451,6 +475,7 @@ __host__ void PrepareNRCTrainData(
 	float4* debugView, const uint trainingMode, const uint visualizeMode
 ) {
 	const uint numBlocks = NEXTMULTIPLEOF(NRC_NUMTRAINRAYS, 128) / 128;
+	//printf("numBlocks=%d\n", numBlocks);
 	PrepareNRCTrainData_Kernel << <numBlocks, 128 >> > (
 		trainBuf, trainInputBuf, trainTargetBuf,
 		debugView, trainingMode, visualizeMode
