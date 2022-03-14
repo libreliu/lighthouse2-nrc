@@ -22,7 +22,7 @@
 
 // core-specific settings
 #define CLAMPFIREFLIES		// suppress fireflies by clamping
-#define MAXPATHLENGTH		5
+#define MAXPATHLENGTH		1 
 
 #ifdef OPTIX_CU
 #include "../../nrcNet/nrc_settings.h"

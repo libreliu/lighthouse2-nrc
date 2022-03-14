@@ -309,7 +309,10 @@ __global__  __launch_bounds__(128 /* max block size */, 2 /* min blocks per sm T
 #else
 __global__  __launch_bounds__(256 /* max block size */, 2 /* min blocks per sm, PASCAL, VOLTA */)
 #endif
-__global__ void PrepareNRCTrainData_Kernel( const float4* trainBuf, float* trainInputBuf, float* trainTargetBuf, float4* debugView ) {
+__global__ void PrepareNRCTrainData_Kernel(
+	const float4* trainBuf, float* trainInputBuf, float* trainTargetBuf,
+	float4* debugView, const uint trainingMode, const uint visualizeMode
+) {
 	uint jobIndex = threadIdx.x + blockIdx.x * blockDim.x;
 	if (jobIndex >= NRC_NUMTRAINRAYS) {
 		return;
@@ -352,11 +355,25 @@ __global__ void PrepareNRCTrainData_Kernel( const float4* trainBuf, float* train
 			float3 directLuminance = make_float3(data4.x, data4.y, data4.z);
 			
 			luminances[pathLength - 1] = directLuminance;
-			luminanceTrained[pathLength - 1] = ((flags & S_NRC_TRAINING_DISCARD) == 0);
+
+			// // short-circuit for convenience
+			// if (trainingMode == 1 && pathLength == 1) {
+			// 	luminanceTrained[0] = true;
+			// } else {
+			// 	luminanceTrained[pathLength - 1] = ((flags & S_NRC_TRAINING_DISCARD) == 0);
+			// }
 			previousDataValid = true;
 			lastValidPathLength = pathLength;
 
 			NRC_DUMP("[trainData] jobIndex=%d, pathLen=%d, last bounce", jobIndex, pathLength);
+
+#ifdef NRC_ENABLE_DEBUG_VIEW
+			if (visualizeMode == 1 && pathLength == 1) {
+				// VISUALIZE_TRAIN_TARGET_FIRSTBOUNCE_DIRECT
+				const uint pixelIdx = float_as_uint(data2.w);
+				debugView[pixelIdx] += make_float4(directLuminance, 0.0f);
+			}
+#endif
 		}
 		else if ((flags & S_NRC_DATA_VALID) > 0 && previousDataValid) {
 			// NOTE: only direct lighting from one of the lights are possible here
@@ -368,6 +385,17 @@ __global__ void PrepareNRCTrainData_Kernel( const float4* trainBuf, float* train
 			luminanceTrained[pathLength - 1] = ((flags & S_NRC_TRAINING_DISCARD) == 0);
 
 			NRC_DUMP("[trainData] jobIndex=%d, pathLen=%d, not last bounce", jobIndex, pathLength);
+
+#ifdef NRC_ENABLE_DEBUG_VIEW
+			if (visualizeMode == 1 && pathLength == 1) {
+				// VISUALIZE_TRAIN_TARGET_FIRSTBOUNCE_DIRECT
+				const uint pixelIdx = float_as_uint(data2.w);
+				debugView[pixelIdx] += make_float4(directLuminance, 0.0f);
+			} else if (visualizeMode == 2 && pathLength == 1) {
+				const uint pixelIdx = float_as_int(data2.w);
+				debugView[pixelIdx] += make_float4(indirectLuminance, 0.0f);
+			}
+#endif
 		}
 		else if ((flags & S_NRC_DATA_VALID) == 0 && previousDataValid) {
 			// illegal data encountered, TODO: error recovery
@@ -418,9 +446,15 @@ __global__ void PrepareNRCTrainData_Kernel( const float4* trainBuf, float* train
 	}
 }
 
-__host__ void PrepareNRCTrainData(const float4* trainBuf, float* trainInputBuf, float* trainTargetBuf, float4* debugView) {
+__host__ void PrepareNRCTrainData(
+	const float4* trainBuf, float* trainInputBuf, float* trainTargetBuf,
+	float4* debugView, const uint trainingMode, const uint visualizeMode
+) {
 	const uint numBlocks = NEXTMULTIPLEOF(NRC_NUMTRAINRAYS, 128) / 128;
-	PrepareNRCTrainData_Kernel << <numBlocks, 128 >> > (trainBuf, trainInputBuf, trainTargetBuf, debugView);
+	PrepareNRCTrainData_Kernel << <numBlocks, 128 >> > (
+		trainBuf, trainInputBuf, trainTargetBuf,
+		debugView, trainingMode, visualizeMode
+	);
 }
 
 #if __CUDA_ARCH__ > 700 // Volta deliberately excluded
@@ -454,6 +488,99 @@ __host__ void NRCNetResultAdd(float4* accumulator, const float* inferenceOutputB
 	const uint numBlocks = NEXTMULTIPLEOF(numSamples, 128) / 128;
 	NRCNetResultAdd_Kernel << <numBlocks, 128 >> > (accumulator, inferenceOutputBuffer, inferenceAuxiliaryBuffer, numSamples);
 }
+
+#if __CUDA_ARCH__ > 700 // Volta deliberately excluded
+__global__  __launch_bounds__( 128 /* max block size */, 2 /* min blocks per sm TURING */ )
+#else
+__global__  __launch_bounds__( 256 /* max block size */, 2 /* min blocks per sm, PASCAL, VOLTA */ )
+#endif
+void shadePrimaryKernel( float4* accumulator, const uint stride,
+	float4* pathStates, float4* hits, float4* connections,
+	const uint R0, const uint shift, const uint* blueNoise, const int pass,
+	const int probePixelIdx, const int pathLength, const int w, const int h, const float spreadAngle,
+	const uint pathCount, float* inferenceInputBuffer, float* inferenceAuxiliaryBuffer )
+{
+	// respect boundaries
+	int jobIndex = threadIdx.x + blockIdx.x * blockDim.x;
+	if (jobIndex >= pathCount) return;
+
+	// gather data by reading sets of four floats for optimal throughput
+	const float4 O4 = pathStates[jobIndex];				// ray origin xyz, w can be ignored
+	const float4 D4 = pathStates[jobIndex + stride];	// ray direction xyz
+	float4 T4 = pathLength == 1 ? make_float4( 1 ) /* faster */ : pathStates[jobIndex + stride * 2]; // path thoughput rgb
+	const float4 hitData = hits[jobIndex];
+	hits[jobIndex].z = __int_as_float( -1 ); // reset for next query
+	const float bsdfPdf = T4.w;
+
+	// derived data
+	uint data = __float_as_uint( O4.w ); // prob.density of the last sampled dir, postponed because of MIS
+	const float3 D = make_float3( D4 );
+	float3 throughput = make_float3( T4 );
+	const CoreTri4* instanceTriangles = (const CoreTri4*)instanceDescriptors[INSTANCEIDX].triangles;
+	const uint pathIdx = PATHIDX;
+	const uint pixelIdx = pathIdx % (w * h);
+	const uint sampleIdx = pathIdx / (w * h) + pass;
+
+	// initialize depth in accumulator for DOF shader
+	// if (pathLength == 1) accumulator[pixelIdx].w += PRIMIDX == NOHIT ? 10000 : HIT_T;
+
+	// use skydome if we didn't hit any geometry
+	if (PRIMIDX == NOHIT)
+	{
+		float3 tD = -worldToSky.TransformVector( D );
+		float3 skyPixel = FLAGS & S_BOUNCED ? SampleSmallSkydome( tD ) : SampleSkydome( tD );
+		float3 contribution = throughput * skyPixel * (1.0f / bsdfPdf);
+		CLAMPINTENSITY; // limit magnitude of thoughput vector to combat fireflies
+		FIXNAN_FLOAT3( contribution );
+		if (accumulator != nullptr)
+			accumulator[pixelIdx] += make_float4( contribution, 0 );
+		return;
+	}
+
+	// object picking
+	if (pixelIdx == probePixelIdx && pathLength == 1)
+	{
+		counters->probedInstid = INSTANCEIDX;	// record instace id at the selected pixel
+		counters->probedTriid = PRIMIDX;		// record primitive id at the selected pixel
+		counters->probedDist = HIT_T;			// record primary ray hit distance
+	}
+
+	// get shadingData and normals
+	ShadingData shadingData;
+	float3 N, iN, fN, T;
+	const float3 I = RAY_O + HIT_T * D;
+	const float coneWidth = spreadAngle * HIT_T;
+	GetShadingData( D, HIT_U, HIT_V, coneWidth, instanceTriangles[PRIMIDX], INSTANCEIDX, shadingData, N, iN, fN, T );
+	uint seed = WangHash( pathIdx * 17 + R0 /* well-seeded xor32 is all you need */ );
+
+	// add to inference buffer
+	const uint inferenceRayIdx = atomicAdd(&nrcCounters->nrcNumInferenceRays, 1);
+	EncodeNRCInput(
+		&inferenceInputBuffer[NRC_INPUTDIM * inferenceRayIdx],
+		I, ROUGHNESS, toSphericalCoord(D), toSphericalCoord(N), shadingData.color, shadingData.color
+	);
+
+	// Write auxiliary buffer
+	// [throughput.x throughput.y throughput.z pixelIdx]
+	// the throughput should consider previous pdf (already done in apply postponed bsdf pdf)
+	inferenceAuxiliaryBuffer[inferenceRayIdx * 4 + 0] = throughput.x;
+	inferenceAuxiliaryBuffer[inferenceRayIdx * 4 + 1] = throughput.y;
+	inferenceAuxiliaryBuffer[inferenceRayIdx * 4 + 2] = throughput.z;
+	inferenceAuxiliaryBuffer[inferenceRayIdx * 4 + 3] = __uint_as_float( pixelIdx );
+
+}
+
+__host__ void shadePrimary( const int pathCount, float4* accumulator, const uint stride,
+	float4* pathStates, float4* hits, float4* connections,
+	const uint R0, const uint shift, const uint* blueNoise, const int pass,
+	const int probePixelIdx, const int pathLength, const int scrwidth, const int scrheight,
+	const float spreadAngle, float* inferenceInputBuffer, float* inferenceAuxiliaryBuffer )
+{
+	const dim3 gridDim( NEXTMULTIPLEOF( pathCount, 128 ) / 128, 1 );
+	shadePrimaryKernel << <gridDim.x, 128 >> > (accumulator, stride, pathStates, hits, connections, R0, shift, blueNoise,
+		pass, probePixelIdx, pathLength, scrwidth, scrheight, spreadAngle, pathCount, inferenceInputBuffer, inferenceAuxiliaryBuffer);
+}
+
 
 } // namespace lh2core
 

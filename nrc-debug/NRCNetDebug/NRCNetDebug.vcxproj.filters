@@ -36,6 +36,7 @@
       <Filter>tiny-cuda-nn</Filter>
     </CudaCompile>
     <CudaCompile Include="..\..\lib\nrcNet\nrcNet.cu" />
+    <CudaCompile Include="main.cu" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="tiny-cuda-nn">

@@ -13,6 +13,7 @@
   <PropertyGroup Label="Globals">
     <ProjectGuid>{9A9C97F1-4B33-40C3-A7F2-AA0D54C3C947}</ProjectGuid>
     <RootNamespace>NRCNetDebug</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
@@ -42,9 +43,11 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
     <IncludePath>$(SolutionDIR)lib\tinycudann\dependencies;$(SolutionDIR)lib\tinycudann\include;$(SolutionDIR)lib\nrcNet\;$(IncludePath)</IncludePath>
+    <OutDir>.\</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <IncludePath>$(SolutionDIR)lib\tinycudann\dependencies;$(SolutionDIR)lib\tinycudann\include;$(SolutionDIR)lib\nrcNet\;$(IncludePath)</IncludePath>
+    <OutDir>.\</OutDir>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>

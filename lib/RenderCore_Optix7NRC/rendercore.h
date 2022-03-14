@@ -67,6 +67,8 @@ public:
 	// internal methods
 private:
 	void RenderImpl( const ViewPyramid& view );
+	void RenderImplNRC( const ViewPyramid& view );
+	void RenderTestPrimary( const ViewPyramid& view );
 	void FinalizeRender();
 	template <class T> T* StagedBufferResize( CoreBuffer<T>*& lightBuffer, const int newCount, const T* sourceData );
 	void UpdateToplevel();
@@ -151,6 +153,21 @@ private:
 	// Stream for nrcNet
 	cudaStream_t inferenceStream;
 	cudaStream_t trainingStream;
+
+	enum TrainingModes {
+		TRAIN_RAYS_DISABLED = 0,
+		TRAIN_RAYS_PRIMARY,
+		TRAIN_RAYS_NORMAL
+	} nrcTrainMode;
+	enum VisualizeModes {
+		VISUALIZE_NORMAL = 0,
+		VISUALIZE_TRAIN_TARGET_FIRSTBOUNCE_DIRECT,
+		VISUALIZE_TRAIN_TARGET_FIRSTBOUNCE_INDIRECT,
+		VISUALIZE_TRAIN_TARGET_FIRSTBOUNCE_ALL,
+		VISUALIZE_TRAIN_TARGET_ALL,
+		VISUALIZE_INFERENCE_PRIMARY
+	} nrcVisualizeMode;
+
 protected:
 	// events
 	HANDLE startEvent, doneEvent;

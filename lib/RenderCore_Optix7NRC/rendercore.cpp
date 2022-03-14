@@ -24,22 +24,39 @@ namespace lh2core
 const surfaceReference* renderTargetRef();
 void InitCountersForExtend( int pathCount );
 void InitCountersSubsequent();
+
 void shade( const int pathCount, float4* accumulator, const uint stride,
 	float4* pathStates, float4* hits, float4* connections,
 	const uint R0, const uint shift, const uint* blueNoise, const int pass,
-	const int probePixelIdx, const int pathLength, const int w, const int h, const float spreadAngle, float* inferenceInputBuffer, float* inferenceAuxiliaryBuffer);
-void shadeTrain(const int pathCount, float4* trainBuf, const uint stride,
-	float4* trainPathStates, float4* hits, float4* connections,
-	const uint R0, const uint shift, const uint* blueNoise, const int pass, const int pathLength, const int scrwidth, const int scrheight, const float spreadAngle, float4* debugView);
-void finalizeRender( const float4* accumulator, const int w, const int h, const int spp );
-void PrepareNRCTrainData(const float4* trainBuf, float* trainInputBuf, float* trainTargetBuf, float4* debugView);
+	const int probePixelIdx, const int pathLength, const int scrwidth, const int scrheight, const float spreadAngle);
 
+void shadeNRC( const int pathCount, float4* accumulator, const uint stride,
+	float4* pathStates, float4* hits, float4* connections,
+	const uint R0, const uint shift, const uint* blueNoise, const int pass,
+	const int probePixelIdx, const int pathLength, const int scrwidth, const int scrheight, const float spreadAngle, float* inferenceInputBuffer, float* inferenceAuxiliaryBuffer);
+
+void shadePrimary( const int pathCount, float4* accumulator, const uint stride,
+	float4* pathStates, float4* hits, float4* connections,
+	const uint R0, const uint shift, const uint* blueNoise, const int pass,
+	const int probePixelIdx, const int pathLength, const int scrwidth, const int scrheight,
+	const float spreadAngle, float* inferenceInputBuffer, float* inferenceAuxiliaryBuffer );
+void shadeTrain(const int pathCount, float4* trainBuf, const uint stride,
+	const uint connectionStride, float4* trainPathStates, float4* hits, float4* connections,
+	const uint R0, const uint shift, const uint* blueNoise, const int pass,
+	const int pathLength, const int scrwidth, const int scrheight, const float spreadAngle,
+	float4* debugView, const uint trainingMode, const uint visualizeMode);
+void finalizeRender( const float4* accumulator, const int w, const int h, const int spp );
+void PrepareNRCTrainData(const float4* trainBuf, float* trainInputBuf, float* trainTargetBuf,
+	float4* debugView, const uint trainingMode, const uint visualizeMode);
+void NRCNetResultAdd(float4* accumulator,
+	const float* inferenceOutputBuffer, const float* inferenceAuxiliaryBuffer, uint numSamples);
 } // namespace lh2core
 
 void NRCNet_Init(cudaStream_t training_stream, cudaStream_t inference_stream);
 float NRCNet_Train(float* trainInputBuffer, float* trainTargetBuffer, size_t numTrainSamples);
 float NRCNet_TrainCPU(float* trainInputBuffer, float* trainTargetBuffer, size_t numTrainSamples);
 void NRCNet_Inference(float* inferenceInputBuffer, float* inferenceOutputBuffer, size_t numInferenceSamples);
+void NRCNet_Destroy();
 
 using namespace lh2core;
 
@@ -268,6 +285,11 @@ void RenderCore::Init()
 
 	// prepare tinycudann context
 	NRCNet_Init(trainingStream, inferenceStream);
+
+	// set default mode
+	nrcTrainMode = TrainingModes::TRAIN_RAYS_DISABLED;
+	nrcVisualizeMode = VisualizeModes::VISUALIZE_NORMAL;
+	NRC_DUMP_INFO("VisualizeMode=%d, TrainMode=%d", (int)nrcVisualizeMode, (int)nrcTrainMode);
 
 	// prepare the bluenoise data
 	const uchar* data8 = (const uchar*)sob256_64; // tables are 8 bit per entry
@@ -802,6 +824,16 @@ void RenderCore::Setting( const char* name, const float value )
 	{
 		noiseShift = fmod( value, 1.0f );
 	}
+	
+	std::string settingName(name);
+	int iValue = (int) value;
+	if (settingName == "trainModes") {
+		nrcTrainMode = (TrainingModes) iValue;
+		NRC_DUMP_INFO("Switched training mode to %d", (int)nrcTrainMode);
+	} else if (settingName == "visualizeModes") {
+		nrcVisualizeMode = (VisualizeModes) iValue;
+		NRC_DUMP_INFO("Switched visualize mode to %d", (int)nrcVisualizeMode);
+	}
 }
 
 //  +-----------------------------------------------------------------------------+
@@ -888,11 +920,145 @@ void RenderCore::Render( const ViewPyramid& view, const Convergence converge, bo
 	}
 	else
 	{
-		RenderImpl( view );
+		// RenderImplNRC( view );
+		//RenderImpl(view);
+		RenderTestPrimary(view);
 		FinalizeRender();
 	}
 }
-void RenderCore::RenderImpl( const ViewPyramid& view )
+
+void RenderCore::RenderTestPrimary(const ViewPyramid& view) {
+	NRC_DUMP_INFO("--- Begin Primary Ray Training & Inference Test ---");
+
+	// update acceleration structure
+	UpdateToplevel();
+	accumulator->Clear( ON_DEVICE );
+	// render an image using OptiX
+	RandomUInt( shiftSeed );
+	coreStats.totalExtensionRays = coreStats.totalShadowRays = 0;
+	float3 right = view.p2 - view.p1, up = view.p3 - view.p1;
+	params.posLensSize = make_float4( view.pos.x, view.pos.y, view.pos.z, view.aperture );
+	params.distortion = view.distortion;
+	params.shift = shiftSeed;
+	params.right = make_float3( right.x, right.y, right.z );
+	params.up = make_float3( up.x, up.y, up.z );
+	params.p1 = make_float3( view.p1.x, view.p1.y, view.p1.z );
+	params.pass = samplesTaken;
+	params.bvhRoot = bvhRoot;
+	// sync params to device
+	params.phase = Params::SPAWN_PRIMARY;
+	cudaMemcpyAsync( (void*)d_params[0], &params, sizeof( Params ), cudaMemcpyHostToDevice, 0 );
+	params.phase = Params::SPAWN_SECONDARY;
+	cudaMemcpyAsync( (void*)d_params[1], &params, sizeof( Params ), cudaMemcpyHostToDevice, 0 );
+	params.phase = Params::SPAWN_SHADOW;
+	cudaMemcpyAsync( (void*)d_params[2], &params, sizeof( Params ), cudaMemcpyHostToDevice, 0 );
+	params.phase = Params::SPAWN_SHADOW_NRC;
+	cudaMemcpyAsync( (void*)d_params[3], &params, sizeof( Params ), cudaMemcpyHostToDevice, 0 );
+	params.phase = Params::SPAWN_PRIMARY_NRC;
+	cudaMemcpyAsync( (void*)d_params[4], &params, sizeof( Params ), cudaMemcpyHostToDevice, 0 );
+	// loop
+	Counters counters;
+	// A primary will be a sample ray if (pathIdx % nrcTrainingSampleModulus == 0) satisfied
+	// uint nrcTrainingSampleModulus = scrwidth * scrheight * scrspp / NRC_NUMTRAINRAYS;
+	// trace nrc rays first
+
+	uint trainPathCount = NRC_NUMTRAINRAYS;
+	// spawn and extend camera rays
+	InitCountersForExtend(trainPathCount);
+	// NOTE: use 1spp here
+	CHK_OPTIX(optixLaunch(pipeline, 0, d_params[4], sizeof(Params), &sbt, params.scrsize.x, params.scrsize.y, 1));
+
+	NRC_DUMP_INFO("Train path count: %d (pathLength=%d)", trainPathCount, 1);
+
+	shadeTrain(trainPathCount, trainBuffer->DevPtr(), NRC_NUMTRAINRAYS, scrwidth* scrheight* scrspp,
+		pathStateBuffer->DevPtr(), hitBuffer->DevPtr(), noDirectLightsInScene ? 0 : connectionBuffer->DevPtr(),
+		RandomUInt(camRNGseed) + 1 * 91771, shiftSeed, blueNoise->DevPtr(), samplesTaken, 1, scrwidth,
+		scrheight, view.spreadAngle, accumulator->DevPtr(), (uint)nrcTrainMode, (uint)nrcVisualizeMode);
+
+	CHK_CUDA(cudaStreamSynchronize(0));
+	counterBuffer->CopyToHost();
+	counters = counterBuffer->HostPtr()[0];
+			
+	NRC_DUMP_INFO("shadeTrain: %d path inputed, %d path extended, %d shadow ray emitted", trainPathCount, counters.extensionRays, counters.shadowRays);
+
+	// connect to light sources
+	if (counters.shadowRays > 0) {
+		CHK_OPTIX(optixLaunch(pipeline, 0, d_params[3], sizeof(Params), &sbt, counters.shadowRays, 1, 1));
+	}
+
+	// Aggregate rays
+	nrcCounterBuffer->HostPtr()[0].nrcActualTrainRays = 0;
+	nrcCounterBuffer->CopyToDevice();
+	cudaDeviceSynchronize();
+	PrepareNRCTrainData(
+		trainBuffer->DevPtr(), trainInputBuffer->DevPtr(), trainTargetBuffer->DevPtr(),
+		accumulator->DevPtr(), (uint)nrcTrainMode, (uint)nrcVisualizeMode
+	);
+
+	cudaStreamSynchronize(0);
+	nrcCounterBuffer->CopyToHost();
+	cudaStreamSynchronize(0);
+
+	uint numActualTrainRays = nrcCounterBuffer->HostPtr()[0].nrcActualTrainRays;
+	NRC_DUMP_INFO("PrepareNRCTrainData: prepared %d rays for training", numActualTrainRays);
+
+	// Train NN
+	if (numActualTrainRays > 128) {
+		// walkaround: copy to host
+		// trainInputBuffer->CopyToHost();
+		// trainTargetBuffer->CopyToHost();
+		float loss = NRCNet_Train(trainInputBuffer->DevPtr(), trainTargetBuffer->DevPtr(), numActualTrainRays);
+		//float loss = NRCNet_TrainCPU(trainInputBuffer->HostPtr(), trainTargetBuffer->HostPtr(), numActualTrainRays);
+		NRC_DUMP_INFO("Train loss = %f", loss);
+	} else {
+		NRC_DUMP_INFO("Skipped since too few rays present.");
+	}
+		
+	cudaStreamSynchronize(trainingStream);
+	NRC_DUMP_INFO("NRC training rays tracing phase done. ");
+
+	nrcCounterBuffer->HostPtr()[0].nrcNumInferenceRays = 0;
+	nrcCounterBuffer->CopyToDevice();
+
+	uint pathCount = scrwidth * scrheight * scrspp;
+	coreStats.deepRayCount = 0;
+	coreStats.primaryRayCount = pathCount;
+
+	// spawn and extend camera rays
+	InitCountersForExtend(pathCount);
+	CHK_OPTIX(optixLaunch(pipeline, 0, d_params[0], sizeof(Params), &sbt, params.scrsize.x, params.scrsize.y * scrspp, 1));
+
+	shadePrimary(pathCount, accumulator->DevPtr(), scrwidth* scrheight* scrspp,
+			pathStateBuffer->DevPtr(), hitBuffer->DevPtr(), noDirectLightsInScene ? 0 : connectionBuffer->DevPtr(),
+			RandomUInt(camRNGseed) + 1 * 91771, shiftSeed, blueNoise->DevPtr(), samplesTaken,
+			probePos.x + scrwidth * probePos.y, 1, scrwidth, scrheight, view.spreadAngle,
+			inferenceInputBuffer->DevPtr(), inferenceAuxiliaryBuffer->DevPtr());
+
+	counterBuffer->CopyToHost();
+	counters = counterBuffer->HostPtr()[0];
+	pathCount = counters.extensionRays;
+	assert(pathCount == 0);
+
+	// finalize statistics
+	CHK_CUDA(cudaDeviceSynchronize());
+
+	nrcCounterBuffer->CopyToHost();
+	uint nrcNumInferenceRays = nrcCounterBuffer->HostPtr()[0].nrcNumInferenceRays;
+	NRC_DUMP_INFO("Got %d rays to be inferenced", nrcNumInferenceRays);
+
+	// TODO: pad
+	uint nrcPaddedRays = (nrcNumInferenceRays / 128) * 128;
+	if (nrcPaddedRays > 0) {
+		NRCNet_Inference(inferenceInputBuffer->DevPtr(), inferenceOutputBuffer->DevPtr(), nrcPaddedRays);
+
+		cudaStreamSynchronize(inferenceStream);
+		NRCNetResultAdd(accumulator->DevPtr(), inferenceOutputBuffer->DevPtr(), inferenceAuxiliaryBuffer->DevPtr(), nrcPaddedRays);
+	}
+
+	NRC_DUMP_INFO("--- End Primary Ray Training & Inference Test ---");
+}
+
+void RenderCore::RenderImplNRC( const ViewPyramid& view )
 {
 	// update acceleration structure
 	UpdateToplevel();
@@ -927,11 +1093,7 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 	// uint nrcTrainingSampleModulus = scrwidth * scrheight * scrspp / NRC_NUMTRAINRAYS;
 	// trace nrc rays first
 
-
-	// TODO: 大bug，trainBuf 没有维护 counter！ 这样不知道现在有多少 ray 在中间了
-	bool traceTrainRays = true;
-	bool visualizeTrainRays = true;
-	if (traceTrainRays) {
+	if (nrcTrainMode != TrainingModes::TRAIN_RAYS_DISABLED) {
 		uint trainPathCount = NRC_NUMTRAINRAYS;
 		trainBuffer->Clear( ON_DEVICE );
 		for (int trainPathLength = 1; trainPathLength <= NRC_MAXTRAINPATHLENGTH; trainPathLength++) {
@@ -952,19 +1114,22 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 			}
 			cudaEventRecord(nrcTrainTraceEnd[trainPathLength - 1]);
 
+			NRC_DUMP_INFO("Train path count: %d (pathLength=%d)", trainPathCount, trainPathLength);
 			cudaEventRecord(nrcTrainShadeStart[trainPathLength - 1]);
-			shadeTrain(trainPathCount, trainBuffer->DevPtr(), NRC_NUMTRAINRAYS,
+			shadeTrain(trainPathCount, trainBuffer->DevPtr(), NRC_NUMTRAINRAYS, scrwidth* scrheight* scrspp,
 				pathStateBuffer->DevPtr(), hitBuffer->DevPtr(), noDirectLightsInScene ? 0 : connectionBuffer->DevPtr(),
 				RandomUInt(camRNGseed) + trainPathLength * 91771, shiftSeed, blueNoise->DevPtr(), samplesTaken, trainPathLength, scrwidth,
-				scrheight, view.spreadAngle, visualizeTrainRays ? accumulator->DevPtr() : nullptr);
+				scrheight, view.spreadAngle, accumulator->DevPtr(), (uint)nrcTrainMode, (uint)nrcVisualizeMode);
 			cudaEventRecord(nrcTrainShadeEnd[trainPathLength - 1]);
 
 			CHK_CUDA(cudaStreamSynchronize(0));
 			counterBuffer->CopyToHost();
 			counters = counterBuffer->HostPtr()[0];
 			trainPathCount = counters.extensionRays;
-			NRC_DUMP_INFO("Train path count: %d (pathLength=%d)", trainPathCount, trainPathLength);
-			if (trainPathCount == 0) break;
+			
+			if (trainPathCount == 0) {
+				break;
+			}
 
 			// trace shadow rays now if the next loop iteration could overflow the buffer.
 			uint maxShadowRays = connectionBuffer->GetSize() / 3;
@@ -978,6 +1143,7 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 		}
 		// connect to light sources
 		cudaEventRecord(nrcTrainShadowStart);
+		NRC_DUMP_INFO("[Train] Shadow rays: %d", counters.shadowRays);
 		if (counters.shadowRays > 0)
 		{
 			CHK_OPTIX(optixLaunch(pipeline, 0, d_params[3], sizeof(Params), &sbt, counters.shadowRays, 1, 1));
@@ -988,7 +1154,10 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 		nrcCounterBuffer->HostPtr()[0].nrcActualTrainRays = 0;
 		nrcCounterBuffer->CopyToDevice();
 		cudaStreamSynchronize(0);
-		PrepareNRCTrainData(trainBuffer->DevPtr(), trainInputBuffer->DevPtr(), trainTargetBuffer->DevPtr(), nullptr);
+		PrepareNRCTrainData(
+			trainBuffer->DevPtr(), trainInputBuffer->DevPtr(), trainTargetBuffer->DevPtr(),
+			accumulator->DevPtr(), (uint)nrcTrainMode, (uint)nrcVisualizeMode
+		);
 
 		cudaStreamSynchronize(0);
 		nrcCounterBuffer->CopyToHost();
@@ -998,16 +1167,16 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 		NRC_DUMP_INFO("Aggregated %d rays.", numActualTrainRays);
 
 		// Train NN
-		if (numActualTrainRays > 0) {
+		if (numActualTrainRays > 128) {
 			// walkaround: copy to host
-			trainInputBuffer->CopyToHost();
-			trainTargetBuffer->CopyToHost();
+			// trainInputBuffer->CopyToHost();
+			// trainTargetBuffer->CopyToHost();
 
-			// NRCNet_Train(trainInputBuffer->DevPtr(), trainTargetBuffer->DevPtr(), numActualTrainRays);
-			float loss = NRCNet_TrainCPU(trainInputBuffer->HostPtr(), trainTargetBuffer->HostPtr(), numActualTrainRays);
+			float loss = NRCNet_Train(trainInputBuffer->DevPtr(), trainTargetBuffer->DevPtr(), numActualTrainRays);
+			//float loss = NRCNet_TrainCPU(trainInputBuffer->HostPtr(), trainTargetBuffer->HostPtr(), numActualTrainRays);
 			NRC_DUMP_INFO("Train loss = %f", loss);
 		} else {
-			NRC_DUMP_INFO("Skipped since no rays present.");
+			NRC_DUMP_INFO("Skipped since too few rays present.");
 		}
 		
 		cudaStreamSynchronize(trainingStream);
@@ -1016,9 +1185,7 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 
 
 	// trace screen rays
-	bool traceScreenRays = true;
-	bool enhanceWithNRC = true;
-	if (traceScreenRays) {
+	if (true) {
 		nrcCounterBuffer->HostPtr()[0].nrcNumInferenceRays = 0;
 		nrcCounterBuffer->CopyToDevice();
 
@@ -1045,11 +1212,20 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 			cudaEventRecord(traceEnd[pathLength - 1]);
 			// shade
 			cudaEventRecord(shadeStart[pathLength - 1]);
-			shade(pathCount, accumulator->DevPtr(), scrwidth * scrheight * scrspp,
+			if (nrcVisualizeMode == VisualizeModes::VISUALIZE_INFERENCE_PRIMARY) {
+				shadePrimary(pathCount, accumulator->DevPtr(), scrwidth* scrheight* scrspp,
+					pathStateBuffer->DevPtr(), hitBuffer->DevPtr(), noDirectLightsInScene ? 0 : connectionBuffer->DevPtr(),
+					RandomUInt(camRNGseed) + pathLength * 91771, shiftSeed, blueNoise->DevPtr(), samplesTaken,
+					probePos.x + scrwidth * probePos.y, pathLength, scrwidth, scrheight, view.spreadAngle,
+					inferenceInputBuffer->DevPtr(), inferenceAuxiliaryBuffer->DevPtr());
+			} else if (nrcVisualizeMode == VisualizeModes::VISUALIZE_NORMAL) {
+				shadeNRC(pathCount, accumulator->DevPtr(), scrwidth * scrheight * scrspp,
 				pathStateBuffer->DevPtr(), hitBuffer->DevPtr(), noDirectLightsInScene ? 0 : connectionBuffer->DevPtr(),
 				RandomUInt(camRNGseed) + pathLength * 91771, shiftSeed, blueNoise->DevPtr(), samplesTaken,
 				probePos.x + scrwidth * probePos.y, pathLength, scrwidth, scrheight, view.spreadAngle,
 				inferenceInputBuffer->DevPtr(), inferenceAuxiliaryBuffer->DevPtr());
+			}
+
 			cudaEventRecord(shadeEnd[pathLength - 1]);
 			counterBuffer->CopyToHost();
 			counters = counterBuffer->HostPtr()[0];
@@ -1078,21 +1254,31 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 		// finalize statistics
 		cudaStreamSynchronize(0);
 		coreStats.totalRays = coreStats.totalExtensionRays + coreStats.totalShadowRays;
-		coreStats.traceTime0 = CUDATools::Elapsed(traceStart[0], traceEnd[0]);
-		coreStats.traceTime1 = CUDATools::Elapsed(traceStart[1], traceEnd[1]);
-		coreStats.shadowTraceTime = CUDATools::Elapsed(shadowStart, shadowEnd);
+
+		CHK_CUDA(cudaDeviceSynchronize());
+		// coreStats.traceTime0 = CUDATools::Elapsed(traceStart[0], traceEnd[0]);
+		// coreStats.traceTime1 = CUDATools::Elapsed(traceStart[1], traceEnd[1]);
+		// coreStats.shadowTraceTime = CUDATools::Elapsed(shadowStart, shadowEnd);
+
 		// probe information
 		coreStats.SetProbeInfo(counters.probedInstid, counters.probedTriid, counters.probedDist);
 		const float3 P = RayTarget(probePos.x, probePos.y, 0.5f, 0.5f, make_int2(scrwidth, scrheight), view.distortion, view.p1, right, up);
 		const float3 D = normalize(P - view.pos);
 		coreStats.probedWorldPos = view.pos + counters.probedDist * D;
 
-		if (enhanceWithNRC) {
+		if (true) {
 			nrcCounterBuffer->CopyToHost();
 			uint nrcNumInferenceRays = nrcCounterBuffer->HostPtr()[0].nrcNumInferenceRays;
 			NRC_DUMP_INFO("Got %d rays to be inferenced", nrcNumInferenceRays);
 
-			// TODO: inference
+			// TODO: pad
+			uint nrcPaddedRays = (nrcNumInferenceRays / 128) * 128;
+			if (nrcPaddedRays > 0) {
+				NRCNet_Inference(inferenceInputBuffer->DevPtr(), inferenceOutputBuffer->DevPtr(), nrcPaddedRays);
+
+				cudaStreamSynchronize(inferenceStream);
+				NRCNetResultAdd(accumulator->DevPtr(), inferenceOutputBuffer->DevPtr(), inferenceAuxiliaryBuffer->DevPtr(), nrcPaddedRays);
+			}
 		}
 
 
@@ -1100,6 +1286,99 @@ void RenderCore::RenderImpl( const ViewPyramid& view )
 
 
 }
+
+void RenderCore::RenderImpl( const ViewPyramid& view )
+{
+	// update acceleration structure
+	UpdateToplevel();
+	// clean accumulator, if requested
+	if (samplesTaken == 0) accumulator->Clear( ON_DEVICE );
+	// render an image using OptiX
+	RandomUInt( shiftSeed );
+	coreStats.totalExtensionRays = coreStats.totalShadowRays = 0;
+	float3 right = view.p2 - view.p1, up = view.p3 - view.p1;
+	params.posLensSize = make_float4( view.pos.x, view.pos.y, view.pos.z, view.aperture );
+	params.distortion = view.distortion;
+	params.shift = shiftSeed;
+	params.right = make_float3( right.x, right.y, right.z );
+	params.up = make_float3( up.x, up.y, up.z );
+	params.p1 = make_float3( view.p1.x, view.p1.y, view.p1.z );
+	params.pass = samplesTaken;
+	params.bvhRoot = bvhRoot;
+	// sync params to device
+	params.phase = Params::SPAWN_PRIMARY;
+	cudaMemcpyAsync( (void*)d_params[0], &params, sizeof( Params ), cudaMemcpyHostToDevice, 0 );
+	params.phase = Params::SPAWN_SECONDARY;
+	cudaMemcpyAsync( (void*)d_params[1], &params, sizeof( Params ), cudaMemcpyHostToDevice, 0 );
+	params.phase = Params::SPAWN_SHADOW;
+	cudaMemcpyAsync( (void*)d_params[2], &params, sizeof( Params ), cudaMemcpyHostToDevice, 0 );
+	// loop
+	Counters counters;
+	uint pathCount = scrwidth * scrheight * scrspp;
+	coreStats.deepRayCount = 0;
+	coreStats.primaryRayCount = pathCount;
+	for (int pathLength = 1; pathLength <= MAXPATHLENGTH; pathLength++)
+	{
+		// generate / extend
+		cudaEventRecord( traceStart[pathLength - 1] );
+		if (pathLength == 1)
+		{
+			// spawn and extend camera rays
+			InitCountersForExtend( pathCount );
+			CHK_OPTIX( optixLaunch( pipeline, 0, d_params[0], sizeof( Params ), &sbt, params.scrsize.x, params.scrsize.y * scrspp, 1 ) );
+		}
+		else
+		{
+			// extend bounced paths
+			if (pathLength == 2) coreStats.bounce1RayCount = pathCount; else coreStats.deepRayCount += pathCount;
+			InitCountersSubsequent();
+			CHK_OPTIX( optixLaunch( pipeline, 0, d_params[1], sizeof( Params ), &sbt, pathCount, 1, 1 ) );
+		}
+		cudaEventRecord( traceEnd[pathLength - 1] );
+		// shade
+		cudaEventRecord( shadeStart[pathLength - 1] );
+		shade( pathCount, accumulator->DevPtr(), scrwidth * scrheight * scrspp,
+			pathStateBuffer->DevPtr(), hitBuffer->DevPtr(), noDirectLightsInScene ? 0 : connectionBuffer->DevPtr(),
+			RandomUInt( camRNGseed ) + pathLength * 91771, shiftSeed, blueNoise->DevPtr(), samplesTaken,
+			probePos.x + scrwidth * probePos.y, pathLength, scrwidth, scrheight, view.spreadAngle );
+		cudaEventRecord( shadeEnd[pathLength - 1] );
+		counterBuffer->CopyToHost();
+		counters = counterBuffer->HostPtr()[0];
+		pathCount = counters.extensionRays;
+		if (pathCount == 0) break;
+		// trace shadow rays now if the next loop iteration could overflow the buffer.
+		uint maxShadowRays = connectionBuffer->GetSize() / 3;
+		if ((pathCount + counters.shadowRays) >= maxShadowRays) if (counters.shadowRays > 0)
+		{
+			CHK_OPTIX( optixLaunch( pipeline, 0, d_params[2], sizeof( Params ), &sbt, counters.shadowRays, 1, 1 ) );
+			counterBuffer->HostPtr()[0].shadowRays = 0;
+			counterBuffer->CopyToDevice();
+			printf( "WARNING: connection buffer overflowed.\n" ); // we should not have to do this; handled here to be conservative.
+		}
+	}
+	// connect to light sources
+	cudaEventRecord( shadowStart );
+	if (counters.shadowRays > 0)
+	{
+		CHK_OPTIX( optixLaunch( pipeline, 0, d_params[2], sizeof( Params ), &sbt, counters.shadowRays, 1, 1 ) );
+	}
+	cudaEventRecord( shadowEnd );
+	// gather ray tracing statistics
+	coreStats.totalShadowRays = counters.shadowRays;
+	coreStats.totalExtensionRays = counters.totalExtensionRays;
+	// finalize statistics
+	cudaStreamSynchronize( 0 );
+	coreStats.totalRays = coreStats.totalExtensionRays + coreStats.totalShadowRays;
+	coreStats.traceTime0 = CUDATools::Elapsed( traceStart[0], traceEnd[0] );
+	coreStats.traceTime1 = CUDATools::Elapsed( traceStart[1], traceEnd[1] );
+	coreStats.shadowTraceTime = CUDATools::Elapsed( shadowStart, shadowEnd );
+	// probe information
+	coreStats.SetProbeInfo( counters.probedInstid, counters.probedTriid, counters.probedDist );
+	const float3 P = RayTarget( probePos.x, probePos.y, 0.5f, 0.5f, make_int2( scrwidth, scrheight ), view.distortion, view.p1, right, up );
+	const float3 D = normalize( P - view.pos );
+	coreStats.probedWorldPos = view.pos + counters.probedDist * D;
+}
+
 
 //  +-----------------------------------------------------------------------------+
 //  |  RenderCore::WaitForRender                                                  |
@@ -1148,6 +1427,8 @@ void RenderCore::FinalizeRender()
 //  +-----------------------------------------------------------------------------+
 void RenderCore::Shutdown()
 {
+	cudaDeviceSynchronize();
+	NRCNet_Destroy();
 	optixPipelineDestroy( pipeline );
 	for (int i = 0; i < 5; i++) optixProgramGroupDestroy( progGroup[i] );
 	optixModuleDestroy( ptxModule );

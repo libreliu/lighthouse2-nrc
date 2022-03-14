@@ -466,7 +466,13 @@ public:
       }
     }
 
+	result = cudaGetLastError();
+
+	cudaDeviceSynchronize();
+
     cutlass::Kernel<GemmKernel><<<grid, block, smem_size, stream>>>(params_);
+
+	cudaDeviceSynchronize();
 
     result = cudaGetLastError();
     return result == cudaSuccess ? Status::kSuccess : Status::kErrorInternal;

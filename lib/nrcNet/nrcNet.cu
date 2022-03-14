@@ -6,19 +6,19 @@
 
 #include <tiny-cuda-nn/optimizer.h>
 #include <tiny-cuda-nn/loss.h>
-#include <tiny-cuda-nn/network.h>
+#include <tiny-cuda-nn/network_with_input_encoding.h>
 
 #include <tiny-cuda-nn/trainer.h>
 
 #include <memory>
 #include "nrc_settings.h"
 
-using network_precision_t = float;
+using network_precision_t = tcnn::network_precision_t;
 
 struct nrcNetContext {
 	std::shared_ptr<tcnn::Loss<network_precision_t>> loss;
 	std::shared_ptr<tcnn::Optimizer<network_precision_t>> optimizer;
-	std::shared_ptr<tcnn::Network<network_precision_t>> network;
+	std::shared_ptr<tcnn::NetworkWithInputEncoding<network_precision_t>> network;
 	std::shared_ptr<tcnn::Trainer<float, network_precision_t, network_precision_t>> trainer;
 
 	cudaStream_t inference_stream;
@@ -38,9 +38,12 @@ void NRCNet_Init(cudaStream_t training_stream, cudaStream_t inference_stream) {
 
 	tcnn::json config = {
 		{"loss", {
-			{"otype", "RelativeL2"}
+			{"otype", "RelativeL2Luminance"}
 		}},
 		{"optimizer", {
+			//{"otype", "SGD"},        // Component type.
+			//{"learning_rate", 1e-2}, // Learning rate.
+			//{"l2_reg", 1e-8},         // Strength of L2 regularization.
 			{"otype", "Adam"},
 			{"learning_rate", 1e-2},
 			{"beta1", 0.9f},
@@ -48,7 +51,7 @@ void NRCNet_Init(cudaStream_t training_stream, cudaStream_t inference_stream) {
 			{"l2_reg", 0.0f},
 		}},
 		{"network", {
-			{"otype", "CutlassMLP"},
+			{"otype", "FullyFusedMLP"},
 			{"n_input_dims", 64},
 			{"n_output_dims", 3},
 			{"n_neurons", 64},
@@ -56,11 +59,15 @@ void NRCNet_Init(cudaStream_t training_stream, cudaStream_t inference_stream) {
 			{"activation", "ReLU"},
 			{"output_activation", "None"},
 		}},
+		{"encoding", {
+			{"otype", "Identity"}
+		}}
 	};
 
 	tcnn::json loss_opts = config.value("loss", tcnn::json::object());
 	tcnn::json optimizer_opts = config.value("optimizer", tcnn::json::object());
 	tcnn::json network_opts = config.value("network", tcnn::json::object());
+	tcnn::json encoding_opts = config.value("encoding", tcnn::json::object());
 
 	nrcNetCtx.loss.reset(
 		tcnn::create_loss<network_precision_t>(loss_opts)
@@ -68,9 +75,12 @@ void NRCNet_Init(cudaStream_t training_stream, cudaStream_t inference_stream) {
 	nrcNetCtx.optimizer.reset(
 		tcnn::create_optimizer<network_precision_t>(optimizer_opts)
 	);
-	nrcNetCtx.network.reset(
-		tcnn::create_network<network_precision_t>(network_opts)
+	nrcNetCtx.network = std::make_shared<
+		tcnn::NetworkWithInputEncoding<network_precision_t>
+	>(
+		NRC_INPUTDIM, 3, encoding_opts, network_opts
 	);
+
 	nrcNetCtx.trainer = std::make_shared<
 		tcnn::Trainer<float, network_precision_t, network_precision_t>
 	>(
@@ -131,42 +141,49 @@ __global__ void gpu_copy_float(uint32_t n_elements, float* __restrict__ src, flo
 	dst[i] = src[i];
 }
 
+inline size_t previousMultipleOf(size_t num, size_t divisor) {
+	return (num / divisor) * divisor;
+}
+
 // Retrieve from cpu memory buffer
 float NRCNet_TrainCPU(
 	float* trainInputBuffer,
 	float* trainTargetBuffer,
 	size_t numTrainSamples
 ) {
-	tcnn::GPUMemory<float> trainInputAux(numTrainSamples * NRC_INPUTDIM);
-	tcnn::GPUMemory<float> trainTargetAux(numTrainSamples * 3);
+	size_t trunctuatedTrainSamples = previousMultipleOf(numTrainSamples, 128);
+	assert(trunctuatedTrainSamples != 0);
+
+	tcnn::GPUMemory<float> trainInputAux(trunctuatedTrainSamples * NRC_INPUTDIM);
+	tcnn::GPUMemory<float> trainTargetAux(trunctuatedTrainSamples * 3);
 
 #ifdef NRC_ENABLE_DEBUG_DUMP_TO_DISK
 	std::string trainInputFilename = "matrix." + std::to_string(nrcNetCtx.seed) + "_" + std::to_string(nrcNetCtx.lastDumpIdx++) + ".data";
 	fprintf(nrcNetCtx.logfp, "log.append({'type': 'trainInput', 'numSamples': %zd, 'fileName': '%s'})\n",
-		numTrainSamples,
+		trunctuatedTrainSamples,
 		trainInputFilename.c_str()
 	);
 	fflush(nrcNetCtx.logfp);
-	dumpBufferToDisk(trainInputBuffer, numTrainSamples * NRC_INPUTDIM * sizeof(float), NRC_DUMP_PATH, trainInputFilename);
+	dumpBufferToDisk(trainInputBuffer, trunctuatedTrainSamples * NRC_INPUTDIM * sizeof(float), NRC_DUMP_PATH, trainInputFilename);
 
 	std::string trainTargetFilename = "matrix." + std::to_string(nrcNetCtx.seed) + "_" + std::to_string(nrcNetCtx.lastDumpIdx++) + ".data";
 	fprintf(nrcNetCtx.logfp, "log.append({'type': 'trainTarget', 'numSamples': %zd, 'fileName': '%s'})\n",
-		numTrainSamples,
+		trunctuatedTrainSamples,
 		trainTargetFilename.c_str()
 	);
 	fflush(nrcNetCtx.logfp);
-	dumpBufferToDisk(trainTargetBuffer, numTrainSamples * 3 * sizeof(float), NRC_DUMP_PATH, trainTargetFilename);
+	dumpBufferToDisk(trainTargetBuffer, trunctuatedTrainSamples * 3 * sizeof(float), NRC_DUMP_PATH, trainTargetFilename);
 #endif
 
 	trainInputAux.copy_from_host(trainInputBuffer);
 	trainTargetAux.copy_from_host(trainTargetBuffer);
 
-	tcnn::GPUMatrix<float, tcnn::CM> trainInput(NRC_INPUTDIM, numTrainSamples);
-	tcnn::GPUMatrix<float, tcnn::CM> trainTarget(3, numTrainSamples);
+	tcnn::GPUMatrix<float/*, tcnn::CM */> trainInput(NRC_INPUTDIM, trunctuatedTrainSamples);
+	tcnn::GPUMatrix<float/*, tcnn::CM */> trainTarget(3, trunctuatedTrainSamples);
 
 	// TODO: check stream it resides in
-	tcnn::linear_kernel(gpu_copy_float, 0, nrcNetCtx.training_stream, numTrainSamples * NRC_INPUTDIM, trainInputAux.data(), trainInput.data());
-	tcnn::linear_kernel(gpu_copy_float, 0, nrcNetCtx.training_stream, numTrainSamples * 3, trainTargetAux.data(), trainTarget.data());
+	tcnn::linear_kernel(gpu_copy_float, 0, nrcNetCtx.training_stream, trunctuatedTrainSamples * NRC_INPUTDIM, trainInputAux.data(), trainInput.data());
+	tcnn::linear_kernel(gpu_copy_float, 0, nrcNetCtx.training_stream, trunctuatedTrainSamples * 3, trainTargetAux.data(), trainTarget.data());
 
 	cudaStreamSynchronize(nrcNetCtx.training_stream);
 
@@ -181,8 +198,11 @@ float NRCNet_Train(
 	float* trainTargetBuffer,
 	size_t numTrainSamples
 ) {
-	tcnn::GPUMatrix<float, tcnn::CM> trainInput(trainInputBuffer, NRC_INPUTDIM, numTrainSamples);
-	tcnn::GPUMatrix<float, tcnn::CM> trainTarget(trainTargetBuffer, 3, numTrainSamples);
+	size_t trunctuatedTrainSamples = previousMultipleOf(numTrainSamples, 128);
+	assert(trunctuatedTrainSamples != 0);
+
+	tcnn::GPUMatrix<float, tcnn::CM> trainInput(trainInputBuffer, NRC_INPUTDIM, trunctuatedTrainSamples);
+	tcnn::GPUMatrix<float, tcnn::CM> trainTarget(trainTargetBuffer, 3, trunctuatedTrainSamples);
 
 	float loss_value;
 	nrcNetCtx.trainer->training_step(nrcNetCtx.training_stream, trainInput, trainTarget, &loss_value, nullptr);
