@@ -161,6 +161,15 @@ del apps\pbrtdemoapp\*.ilk /Q
 del apps\pbrtdemoapp\*.exp /Q
 del apps\pbrtdemoapp\*.lib /Q
 
+rd nrc-debug\NRCNetDebug\x64 /S /Q
+del nrc-debug\NRCNetDebug\*.exe /Q
+del nrc-debug\NRCNetDebug\*.iobj /Q
+del nrc-debug\NRCNetDebug\*.ipdb /Q
+del nrc-debug\NRCNetDebug\*.pdb /Q
+del nrc-debug\NRCNetDebug\*.ilk /Q
+del nrc-debug\NRCNetDebug\*.exp /Q
+del nrc-debug\NRCNetDebug\*.lib /Q
+
 rem | Clean up other components
 
 rd lib\RenderSystem\lib /S /Q
