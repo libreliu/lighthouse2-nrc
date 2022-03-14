@@ -67,6 +67,7 @@ public:
 	// internal methods
 private:
 	void RenderImpl( const ViewPyramid& view );
+	void RenderTestPrimary( const ViewPyramid& view );
 	void FinalizeRender();
 	template <class T> T* StagedBufferResize( CoreBuffer<T>*& lightBuffer, const int newCount, const T* sourceData );
 	void UpdateToplevel();

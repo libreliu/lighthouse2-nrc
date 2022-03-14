@@ -126,6 +126,7 @@ __device__ void setupPrimaryRayNRCTrain( const uint pixelIdx, const uint stride 
 	generateEyeRay( O, D, pixelIdx, sampleIdx, seed );
 	// populate path state array
 	// *IMPORTANT*: hold actual pixelIdx in O4.w, used as "pathIdx" in shading step
+	printf("trainSlotIdx=%d, O: (%f,%f,%f) D: (%f,%f,%f)\n", trainSlotIdx, O.x, O.y, O.z, D.x, D.y, D.z);
 	params.pathStates[trainSlotIdx] = make_float4( O, __uint_as_float( (pixelIdx << 6) + 1 /* S_SPECULAR in CUDA code */ ) );
 	params.pathStates[trainSlotIdx + stride] = make_float4( D, 0 );
 	// trace eye ray
@@ -145,8 +146,8 @@ __device__ void setupPrimaryRay( const uint pathIdx, const uint stride )
 	float3 O, D;
 	generateEyeRay( O, D, pixelIdx, sampleIdx, seed );
 	// populate path state array
-	params.pathStates[pathIdx] = make_float4( O, __uint_as_float( (pathIdx << 6) + 1 /* S_SPECULAR in CUDA code */ ) );
-	params.pathStates[pathIdx + stride] = make_float4( D, 0 );
+	// params.pathStates[pathIdx] = make_float4( O, __uint_as_float( (pathIdx << 6) + 1 /* S_SPECULAR in CUDA code */ ) );
+	// params.pathStates[pathIdx + stride] = make_float4( D, 0 );
 	// trace eye ray
 	uint u0, u1 = 0, u2 = 0xffffffff, u3 = __float_as_uint( 1e34f );
 	optixTrace( params.bvhRoot, O, D, params.geometryEpsilon, 1e34f, 0.0f /* ray time */, OptixVisibilityMask( 1 ),
