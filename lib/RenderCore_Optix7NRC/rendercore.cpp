@@ -143,7 +143,8 @@ void RenderCore::CreateOptixContext( int cc )
 
 	// load and compile PTX
 	string ptx;
-	if (NeedsRecompile( "../../lib/RenderCore_Optix7NRC/optix/", ".optix.turing.cu.ptx", ".optix.cu", "../../RenderSystem/common_settings.h", "../core_settings.h" ))
+	// if (NeedsRecompile( "../../lib/RenderCore_Optix7NRC/optix/", ".optix.turing.cu.ptx", ".optix.cu", "../../RenderSystem/common_settings.h", "../core_settings.h" ))
+	if (true)
 	{
 		CUDATools::compileToPTX( ptx, TextFileRead( "../../lib/RenderCore_Optix7NRC/optix/.optix.cu" ).c_str(), "../../lib/RenderCore_Optix7NRC/optix", cc, 7 );
 		if (cc / 10 == 7) TextFileWrite( ptx, "../../lib/RenderCore_Optix7NRC/optix/.optix.turing.cu.ptx" );
@@ -933,9 +934,9 @@ void RenderCore::RenderTestPrimary(const ViewPyramid& view) {
 	// update acceleration structure
 	UpdateToplevel();
 	accumulator->Clear( ON_DEVICE );
-	std::vector<float> emptyData(scrwidth*scrheight*4*2, 0.5f);
-	accumulator->SetHostData((float4*)emptyData.data());
-	accumulator->CopyToDevice();
+	// std::vector<float> emptyData(scrwidth*scrheight*4*2, 0.5f);
+	// accumulator->SetHostData((float4*)emptyData.data());
+	// accumulator->CopyToDevice();
 
 	// render an image using OptiX
 	RandomUInt( shiftSeed );
@@ -996,7 +997,7 @@ void RenderCore::RenderTestPrimary(const ViewPyramid& view) {
 	cudaDeviceSynchronize();
 	PrepareNRCTrainData(
 		trainBuffer->DevPtr(), trainInputBuffer->DevPtr(), trainTargetBuffer->DevPtr(),
-		accumulator->DevPtr(), (uint)nrcTrainMode, 1
+		accumulator->DevPtr(), (uint)nrcTrainMode, 0
 	);
 
 	cudaStreamSynchronize(0);
@@ -1061,7 +1062,7 @@ void RenderCore::RenderTestPrimary(const ViewPyramid& view) {
 		NRCNet_Inference(inferenceInputBuffer->DevPtr(), inferenceOutputBuffer->DevPtr(), nrcPaddedRays);
 
 		cudaStreamSynchronize(inferenceStream);
-		//NRCNetResultAdd(accumulator->DevPtr(), inferenceOutputBuffer->DevPtr(), inferenceAuxiliaryBuffer->DevPtr(), nrcPaddedRays);
+		NRCNetResultAdd(accumulator->DevPtr(), inferenceOutputBuffer->DevPtr(), inferenceAuxiliaryBuffer->DevPtr(), nrcPaddedRays);
 	}
 
 	NRC_DUMP_INFO("--- End Primary Ray Training & Inference Test ---");

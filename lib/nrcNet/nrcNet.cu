@@ -38,9 +38,9 @@ void NRCNet_Init(cudaStream_t training_stream, cudaStream_t inference_stream) {
 
 	tcnn::json config = {
 		{"loss", {
-			/*{"otype", "RelativeL2Luminance"}*/
+			{"otype", "RelativeL2Luminance"}
 			/*{"otype", "RelativeL2"}*/
-			{"otype", "L2"}
+			//{"otype", "L2"}
 		}},
 		{"optimizer", {
 			//{"otype", "SGD"},        // Component type.
@@ -50,7 +50,7 @@ void NRCNet_Init(cudaStream_t training_stream, cudaStream_t inference_stream) {
 			{"learning_rate", 1e-3},
 			{"beta1", 0.9f},
 			{"beta2", 0.99f},
-			{"l2_reg", 0.0f},
+			{"l2_reg", 1e-7},
 		}},
 		{"network", {
 			{"otype", "FullyFusedMLP"},

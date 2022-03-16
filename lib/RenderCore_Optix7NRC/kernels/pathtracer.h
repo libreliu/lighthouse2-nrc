@@ -585,7 +585,7 @@ void shadeTrainKernel( float4* trainBuf, const uint stride, const uint connectio
 			/* luminance output - represents luminance of this segment; accumulate to get real luminance later */
 			skyPixel * (1.0f / bsdfPdf),
 			/* flags */
-			__uint_as_float(FLAGS | S_NRC_TRAINING_PATH_ENDED | S_NRC_DATA_VALID | S_NRC_TRAINING_DISCARD)
+			__uint_as_float(/*FLAGS |*/ S_NRC_TRAINING_PATH_ENDED | S_NRC_DATA_VALID | S_NRC_TRAINING_DISCARD)
 		);
 		NRC_TRAINBUF(trainSlotIdx, pathLength, 5) = make_float4(
 			/* throughput factor - useless since no next rays exists; 
@@ -678,7 +678,7 @@ void shadeTrainKernel( float4* trainBuf, const uint stride, const uint connectio
 			/* luminance output - represents luminance of this segment; accumulate to get real luminance later */
 			contribution,
 			/* flags */
-			__uint_as_float(FLAGS | S_NRC_TRAINING_PATH_ENDED | S_NRC_DATA_VALID)
+			__uint_as_float(/*FLAGS |*/ S_NRC_TRAINING_PATH_ENDED | S_NRC_DATA_VALID)
 		);
 		NRC_TRAINBUF(trainSlotIdx, pathLength, 5) = make_float4(
 			/* throughput factor - useless since no next rays exists; 
@@ -783,7 +783,7 @@ void shadeTrainKernel( float4* trainBuf, const uint stride, const uint connectio
 			/* luminance output - represents luminance of this segment; accumulate to get real luminance later */
 			0.0f, 0.0f, 0.0f,
 			/* flags */
-			__uint_as_float(FLAGS | S_NRC_TRAINING_PATH_ENDED | S_NRC_DATA_VALID /*| S_NRC_TRAINING_DISCARD */)
+			__uint_as_float(/*FLAGS |*/ S_NRC_TRAINING_PATH_ENDED | S_NRC_DATA_VALID /*| S_NRC_TRAINING_DISCARD */)
 		);
 		NRC_TRAINBUF(trainSlotIdx, pathLength, 5) = make_float4(
 			/* throughput factor - useless since no next rays exists; 
@@ -843,7 +843,7 @@ void shadeTrainKernel( float4* trainBuf, const uint stride, const uint connectio
 			*	#define S_BOUNCEDTWICE	8	// this core will stop after two diffuse bounces
 			*	#define S_NRC_TRAINING_PATH_ENDED 16  // (NRC) this training path has ended
 			*/
-			__uint_as_float(FLAGS | S_NRC_TRAINING_PATH_ENDED | S_NRC_DATA_VALID /*| S_NRC_TRAINING_DISCARD*/)
+			__uint_as_float(/*FLAGS |*/ S_NRC_TRAINING_PATH_ENDED | S_NRC_DATA_VALID /*| S_NRC_TRAINING_DISCARD*/)
 		);
 		NRC_TRAINBUF(trainSlotIdx, pathLength, 5) = make_float4(
 			/* throughput factor - useless since no next rays exists; 
@@ -900,7 +900,7 @@ void shadeTrainKernel( float4* trainBuf, const uint stride, const uint connectio
 			/* luminance output - represents luminance of this segment; accumulate to get real luminance later */
 			0.0f, 0.0f, 0.0f,
 			/* flags */
-			__uint_as_float(FLAGS | S_NRC_DATA_VALID)
+			__uint_as_float(/*FLAGS |*/ S_NRC_DATA_VALID)
 		);
 		NRC_TRAINBUF(trainSlotIdx, pathLength, 5) = make_float4(
 			/* throughput factor - useless since no next rays exists; 

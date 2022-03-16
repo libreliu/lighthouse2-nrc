@@ -235,30 +235,30 @@ inline __device__ void EncodeNRCInput(
 	const size_t specular_encoded_offset = diffuse_encoded_offset + 3;
 
 	// Position - Frequency - 3->3x12
-	// for (uint i = 0; i < 6; i++) {
-	// 	bufStart[position_encoded_offset + i] = sinf(powf(2, i) * PI * rayIsect.x);
-	// 	bufStart[position_encoded_offset + i + 6] = cosf(powf(2, i) * PI * rayIsect.x);
-	// }
-	// for (uint i = 0; i < 6; i++) {
-	// 	bufStart[position_encoded_offset + i + 12] = sinf(powf(2, i) * PI * rayIsect.y);
-	// 	bufStart[position_encoded_offset + i + 12 + 6] = cosf(powf(2, i) * PI * rayIsect.y);
-	// }
-	// for (uint i = 0; i < 6; i++) {
-	// 	bufStart[position_encoded_offset + i + 24] = sinf(powf(2, i) * PI * rayIsect.z);
-	// 	bufStart[position_encoded_offset + i + 24 + 6] = cosf(powf(2, i) * PI * rayIsect.z);
-	// }
-	for (uint i = 0; i < 6; i++) {
-		bufStart[position_encoded_offset + i] = rayIsect.x;
-		bufStart[position_encoded_offset + i + 6] = rayIsect.x;
-	}
-	for (uint i = 0; i < 6; i++) {
-		bufStart[position_encoded_offset + i + 12] = rayIsect.y;
-		bufStart[position_encoded_offset + i + 12 + 6] = rayIsect.y;
-	}
-	for (uint i = 0; i < 6; i++) {
-		bufStart[position_encoded_offset + i + 24] = rayIsect.z;
-		bufStart[position_encoded_offset + i + 24 + 6] = rayIsect.z;
-	}
+	 for (uint i = 0; i < 6; i++) {
+	 	bufStart[position_encoded_offset + i] = sinf(powf(2, i) * PI * rayIsect.x);
+	 	bufStart[position_encoded_offset + i + 6] = cosf(powf(2, i) * PI * rayIsect.x);
+	 }
+	 for (uint i = 0; i < 6; i++) {
+	 	bufStart[position_encoded_offset + i + 12] = sinf(powf(2, i) * PI * rayIsect.y);
+	 	bufStart[position_encoded_offset + i + 12 + 6] = cosf(powf(2, i) * PI * rayIsect.y);
+	 }
+	 for (uint i = 0; i < 6; i++) {
+	 	bufStart[position_encoded_offset + i + 24] = sinf(powf(2, i) * PI * rayIsect.z);
+	 	bufStart[position_encoded_offset + i + 24 + 6] = cosf(powf(2, i) * PI * rayIsect.z);
+	 }
+	//for (uint i = 0; i < 6; i++) {
+	//	bufStart[position_encoded_offset + i] = rayIsect.x;
+	//	bufStart[position_encoded_offset + i + 6] = rayIsect.x;
+	//}
+	//for (uint i = 0; i < 6; i++) {
+	//	bufStart[position_encoded_offset + i + 12] = rayIsect.y;
+	//	bufStart[position_encoded_offset + i + 12 + 6] = rayIsect.y;
+	//}
+	//for (uint i = 0; i < 6; i++) {
+	//	bufStart[position_encoded_offset + i + 24] = rayIsect.z;
+	//	bufStart[position_encoded_offset + i + 24 + 6] = rayIsect.z;
+	//}
 
 	// Direction - OneBlob - 2->2x4 (k=4, same for below)
 	// dir_sph: { 0 to 1, 0 to 1 }
@@ -351,7 +351,17 @@ __global__ void PrepareNRCTrainData_Kernel(
 
 		const uint flags = __float_as_uint(data4.w);
 
-		NRC_DUMP("[trainData] jobIndex=%d, pathLen=%d, flags=%x, %d, %d", jobIndex, pathLength, flags, (flags & S_NRC_DATA_VALID), (flags & S_NRC_TRAINING_DISCARD));
+		// NRC_DUMP("[trainData] jobIndex=%d, pathLen=%d, flags=%x, %d, %d", jobIndex, pathLength, flags, (flags & S_NRC_DATA_VALID), (flags & S_NRC_TRAINING_DISCARD));
+		NRC_DUMP(
+			"[trainData] trainSlotIdx=%d, pathLen=%d\n"
+			"RayIsect=(%f,%f,%f), roughness=%f, Direction=(%f,%f), Normal=(%f,%f)\n"
+			"diffuseRefl=(%f,%f,%f), SpecularRefl=(%f,%f,%f), pixelIdx=%d\n"
+			"directLo=(%f,%f,%f), flag=%d, throughput=(%f,%f,%f), postponedBsdfPdf=%f\n",
+			jobIndex, pathLength,
+			data0.x, data0.y, data0.z, data0.w, data1.x, data1.y, data1.z, data1.w,
+			data2.x, data2.y, data2.z, data3.x, data3.y, data3.z, __float_as_uint(data2.w),
+			data4.x, data4.y, data4.z, __float_as_uint(data4.w), data5.x, data5.y, data5.z, data5.w
+			);
 
 		if ((flags & S_NRC_DATA_VALID) > 0 && !previousDataValid) {
 			// This is the last bounce, reason:

@@ -13,7 +13,13 @@
    limitations under the License.
 */
 
+#include <windows.h>
+#include <io.h>
+#include <fcntl.h>
+#include <cstdio>
+
 GLFWwindow* window = 0;
+
 
 //  +-----------------------------------------------------------------------------+
 //  |  ...Callback                                                                |
@@ -52,6 +58,7 @@ void ErrorCallback( int error, const char*description )
 //  |  Opens a GL window using GLFW.                                        LH2'19|
 //  +-----------------------------------------------------------------------------+
 void OpenConsole();
+void OpenLogfile();
 void InitGLFW()
 {
 	// open a window
@@ -88,6 +95,7 @@ void InitGLFW()
 	delete logo;
 	// we want a console window for text output
 	OpenConsole();
+	//OpenLogfile();
 }
 
 //  +-----------------------------------------------------------------------------+
@@ -111,4 +119,20 @@ void OpenConsole()
 #endif
 }
 
+// Add to examine log in a convenience way
+// NOTE: freopen only redirects C ones, but not CUDA ones
+// https://stackoverflow.com/questions/54094127/redirecting-stdout-in-win32-does-not-redirect-stdout
+void OpenLogfile()
+{
+	FILE* file = nullptr;
+	freopen_s(&file, "./out.log", "w", stdout);
+	//freopen_s(&file, "CON", "w", stderr);
+
+	HANDLE hdl = (HANDLE)_get_osfhandle(_fileno(file));
+
+	// This now allows CUDA stdout to be poured in
+	SetStdHandle(STD_OUTPUT_HANDLE, hdl);
+
+	setvbuf(stdout, NULL, _IONBF, 0);
+}
 // EOF
